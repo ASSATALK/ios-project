@@ -28,7 +28,7 @@ jobs:
       - name: Install mlc-llm prebuilt wheels
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --pre --extra-index-url https://mlc.ai/wheels mlc-llm mlc-ai
+          python -m pip install --pre -U -f https://mlc.ai/wheels mlc-llm-nightly-cpu mlc-ai-nightly-cpu
           echo "== mlc_llm check =="
           python -c "import mlc_llm, sys; print('mlc_llm:', mlc_llm.__file__); print(sys.version)"
 
