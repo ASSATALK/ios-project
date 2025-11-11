@@ -24,12 +24,10 @@ MSG
 fi
 
 if ! command -v mlc_llm &>/dev/null; then
-  cat <<'MSG'
-[prepare_mlc_assets] mlc_llm CLI를 찾을 수 없습니다.
-다음 절차로 설치해 주세요.
-  pip install --pre -U -f https://mlc.ai/wheels mlc-llm-nightly-cpu mlc-ai-nightly-cpu
-MSG
-  exit 1
+  echo "[prepare_mlc_assets] mlc_llm CLI를 찾을 수 없습니다. Python 모듈로 실행합니다."
+  MLCLLM_CMD="python -m mlc_llm"
+else
+  MLCLLM_CMD="mlc_llm"
 fi
 
 if ! command -v python3 &>/dev/null; then
@@ -135,7 +133,7 @@ if [[ -n "$MLC_SOURCE_DIR" ]]; then
 fi
 
 set -x
-mlc_llm package "${PACKAGE_ARGS[@]}"
+$MLCLLM_CMD package "${PACKAGE_ARGS[@]}"
 set +x
 
 echo "[prepare_mlc_assets] 완료: dist/ 아래에 번들 및 라이브러리가 생성되었습니다."
