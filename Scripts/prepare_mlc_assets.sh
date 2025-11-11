@@ -27,7 +27,7 @@ if ! command -v mlc_llm &>/dev/null; then
   cat <<'MSG'
 [prepare_mlc_assets] mlc_llm CLI를 찾을 수 없습니다.
 다음 절차로 설치해 주세요.
-  pip install --pre --extra-index-url https://mlc.ai/wheels mlc-llm-nightly
+  pip install --pre -U -f https://mlc.ai/wheels mlc-llm-nightly-cpu mlc-ai-nightly-cpu
 MSG
   exit 1
 fi
