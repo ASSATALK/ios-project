@@ -1,126 +1,129 @@
+
 import Foundation
 import Network
 
 final class HttpLLMServer {
     private var listener: NWListener!
+    private let requestDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
+    private let responseEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        return encoder
+    }()
 
-    func start(port: UInt16 = 5000) throws {
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            throw NSError(domain: "HttpLLMServer.port", code: -1)
-        }
+    func start(port: UInt16 = 8080) throws {
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else { throw NSError(domain: "port", code: -1) }
         listener = try NWListener(using: .tcp, on: nwPort)
-        listener.stateUpdateHandler = { print("[NWListener]", $0) }
+        listener.stateUpdateHandler = { print("[NWListener state]", $0) }
         listener.newConnectionHandler = { [weak self] conn in
+            print("[Conn] new:", conn.endpoint)
             conn.start(queue: .main)
             self?.handle(conn)
         }
         listener.start(queue: .main)
-    }
-
-    func stop() {
-        listener?.cancel()
+        print("[Server] listening on port", port)
     }
 
     private func handle(_ conn: NWConnection) {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
-            guard let self, error == nil, let data else {
-                conn.cancel()
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, _, _ in
+            guard let self, let data, !data.isEmpty,
+                  let req = String(data: data, encoding: .utf8) else { conn.cancel(); return }
+            let first = req.split(separator: "\n").first ?? ""
+            print("[Request]", first.trimmingCharacters(in: .whitespacesAndNewlines))
+
+            if req.hasPrefix("GET /health") {
+                let body = Data("{\"ok\":true}".utf8)
+                conn.send(content: self.makeResponse(status: 200, contentType: "application/json", body: body, cors: true),
+                          completion: .contentProcessed { _ in conn.cancel() })
                 return
             }
-            let req = String(decoding: data, as: UTF8.self)
-            Task {
-                await self.respond(conn: conn, raw: req)
+            if req.hasPrefix("OPTIONS ") {
+                let header = """
+                HTTP/1.1 204 No Content\r
+                Access-Control-Allow-Origin: *\r
+                Access-Control-Allow-Methods: POST, GET, OPTIONS\r
+                Access-Control-Allow-Headers: Content-Type\r
+                Content-Length: 0\r
+                Connection: close\r
+
+                """
+                conn.send(content: Data(header.utf8), completion: .contentProcessed { _ in conn.cancel() })
+                return
             }
-            if isComplete == false {
-                // keep-alive 미지원: 간단화를 위해 1회 응답 후 닫음
+            if req.starts(with: "POST /api/generate") {
+                let bodyStr = self.extractBody(from: req)
+                self.handleGenerate(body: bodyStr, connection: conn)
+                return
             }
+
+            let body = Data("Not Found".utf8)
+            let resp = self.makeResponse(status: 404, contentType: "text/plain", body: body, cors: true)
+            conn.send(content: resp, completion: .contentProcessed { _ in conn.cancel() })
         }
     }
 
-    private func respond(conn: NWConnection, raw: String) async {
-        let lines = raw.split(separator: "\r\n", omittingEmptySubsequences: false)
-        guard let requestLine = lines.first else {
-            conn.cancel(); return
+    private func extractBody(from http: String) -> String {
+        if let r = http.range(of: "\r\n\r\n") { return String(http[r.upperBound...]) }
+        return ""
+    }
+
+    private func handleGenerate(body: String, connection: NWConnection) {
+        guard let bodyData = body.data(using: .utf8) else {
+            sendJSON(ErrorResponse(error: "요청 본문을 디코드할 수 없습니다."), status: 400, connection: connection)
+            return
         }
-        let comps = requestLine.split(separator: " ")
-        guard comps.count >= 2 else { conn.cancel(); return }
 
-        let method = String(comps[0])
-        let path = String(comps[1])
+        do {
+            let payload = try requestDecoder.decode(GenerateAPIRequest.self, from: bodyData)
+            let request = try payload.asBridgeRequest()
+            let preview = request.messages.last?.content ?? ""
+            print("[Generate] messages: \(request.messages.count) last length: \(preview.count)")
 
-        // 본문 추출
-        let sep = "\r\n\r\n"
-        let bodyStr: String = {
-            if let range = raw.range(of: sep) {
-                return String(raw[range.upperBound...])
-            }
-            return ""
-        }()
-
-        switch (method, path) {
-        case ("GET", "/health"):
-            send(conn, status: 200, contentType: "application/json", body: #"{"ok":true}"#)
-
-        case ("OPTIONS", _):
-            // CORS Preflight
-            send(conn, status: 204, contentType: "text/plain", body: "", cors: true)
-
-        case ("POST", "/api/generate"), ("POST", "/api/chat"):
-            // request JSON 파싱
-            let req = parseGenerate(bodyStr) ?? GenerateRequest(prompt: bodyStr, max_tokens: 128, temperature: 0.7)
-
-            // NDJSON 라인들을 메모리에 모아 한 방에 전송(클라이언트는 라인단위 파싱)
-            var lines: [String] = []
-            await withCheckedContinuation { cont in
-                Task {
-                    do {
-                        try await MLCBridge.generate(prompt: req.prompt,
-                                                     maxTokens: req.max_tokens ?? 128,
-                                                     temperature: req.temperature ?? 0.7) { token in
-                            let obj = ["token": token]
-                            if let data = try? JSONSerialization.data(withJSONObject: obj),
-                               let line = String(data: data, encoding: .utf8) {
-                                lines.append(line)
-                            }
-                        }
-                        cont.resume()
-                    } catch {
-                        let obj = ["error": "generation_failed", "message": "\(error)"]
-                        if let data = try? JSONSerialization.data(withJSONObject: obj),
-                           let line = String(data: data, encoding: .utf8) {
-                            lines.append(line)
-                        }
-                        cont.resume()
-                    }
+            MLCBridge.generate(request: request) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let generation):
+                    self.sendJSON(generation, status: 200, connection: connection)
+                case .failure(let error):
+                    self.sendJSON(ErrorResponse(error: error.localizedDescription), status: 500, connection: connection)
                 }
             }
-            let body = lines.joined(separator: "\n") + "\n"
-            send(conn, status: 200, contentType: "application/x-ndjson", body: body, cors: true)
-
-        default:
-            send(conn, status: 404, contentType: "text/plain", body: "Not Found")
+        } catch {
+            let message: String
+            if let validationError = error as? GenerateAPIRequest.ValidationError {
+                message = validationError.localizedDescription
+            } else if let decodingError = error as? DecodingError {
+                message = "요청 JSON 형식이 잘못되었습니다: \(decodingError.localizedDescription)"
+            } else {
+                message = "요청을 처리할 수 없습니다."
+            }
+            sendJSON(ErrorResponse(error: message), status: 400, connection: connection)
         }
     }
 
-    private func parseGenerate(_ s: String) -> GenerateRequest? {
-        guard let data = s.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(GenerateRequest.self, from: data)
+    private func sendJSON<T: Encodable>(_ value: T, status: Int, connection: NWConnection) {
+        do {
+            let body = try responseEncoder.encode(value)
+            let resp = makeResponse(status: status, contentType: "application/json", body: body, cors: true)
+            connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
+        } catch {
+            let fallback = Data("{\"error\":\"응답을 직렬화하지 못했습니다.\"}".utf8)
+            let resp = makeResponse(status: 500, contentType: "application/json", body: fallback, cors: true)
+            connection.send(content: resp, completion: .contentProcessed { _ in connection.cancel() })
+        }
     }
 
-    private func send(_ conn: NWConnection, status: Int, contentType: String, body: String, cors: Bool = false) {
+    private func makeResponse(status: Int, contentType: String, body: Data, cors: Bool) -> Data {
         var header = "HTTP/1.1 \(status) \(statusText(status))\r\n"
         header += "Content-Type: \(contentType)\r\n"
-        header += "Content-Length: \(body.utf8.count)\r\n"
-        if cors {
-            header += "Access-Control-Allow-Origin: *\r\n"
-            header += "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n"
-            header += "Access-Control-Allow-Headers: Content-Type\r\n"
-        }
+        header += "Content-Length: \(body.count)\r\n"
+        if cors { header += "Access-Control-Allow-Origin: *\r\n" }
         header += "Connection: close\r\n\r\n"
-        let data = Data(header.utf8) + Data(body.utf8)
-        conn.send(content: data, completion: .contentProcessed { _ in
-            conn.cancel()
-        })
+        return Data(header.utf8) + body
     }
 
     private func statusText(_ code: Int) -> String {
@@ -130,5 +133,80 @@ final class HttpLLMServer {
         case 404: return "Not Found"
         default: return "OK"
         }
+    }
+}
+
+private extension HttpLLMServer {
+    struct GenerateAPIRequest: Decodable {
+        struct Message: Decodable {
+            var role: MLCBridge.MessageRole
+            var content: String
+        }
+
+        var prompt: String?
+        var messages: [Message]?
+        var maxTokens: Int?
+        var temperature: Double?
+        var topP: Double?
+        var stop: [String]?
+        var presencePenalty: Double?
+        var frequencyPenalty: Double?
+
+        func asBridgeRequest() throws -> MLCBridge.GenerationRequest {
+            var normalizedMessages: [MLCBridge.Message] = (messages ?? []).map {
+                MLCBridge.Message(role: $0.role, content: $0.content)
+            }
+
+            if normalizedMessages.isEmpty,
+               let prompt,
+               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                normalizedMessages = [MLCBridge.Message(role: .user, content: prompt)]
+            }
+
+            normalizedMessages = normalizedMessages.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            guard !normalizedMessages.isEmpty else { throw ValidationError.emptyPrompt }
+
+            if let maxTokens, maxTokens <= 0 { throw ValidationError.invalidMaxTokens }
+            if let temperature, temperature < 0 { throw ValidationError.invalidTemperature }
+            if let topP, topP <= 0 || topP > 1 { throw ValidationError.invalidTopP }
+
+            let sanitizedStops = stop?
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            return MLCBridge.GenerationRequest(
+                messages: normalizedMessages,
+                maxTokens: maxTokens,
+                temperature: temperature,
+                topP: topP,
+                stop: sanitizedStops,
+                presencePenalty: presencePenalty,
+                frequencyPenalty: frequencyPenalty
+            )
+        }
+
+        enum ValidationError: LocalizedError {
+            case emptyPrompt
+            case invalidMaxTokens
+            case invalidTemperature
+            case invalidTopP
+
+            var errorDescription: String? {
+                switch self {
+                case .emptyPrompt:
+                    return "prompt 또는 messages 중 하나는 최소 한 글자를 포함해야 합니다."
+                case .invalidMaxTokens:
+                    return "max_tokens 값은 1 이상의 정수여야 합니다."
+                case .invalidTemperature:
+                    return "temperature 값은 0 이상이어야 합니다."
+                case .invalidTopP:
+                    return "top_p 값은 0보다 크고 1 이하이어야 합니다."
+                }
+            }
+        }
+    }
+
+    struct ErrorResponse: Codable {
+        var error: String
     }
 }

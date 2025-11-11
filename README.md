@@ -3,12 +3,66 @@
 
 **What this is**
 - Minimal iOS app that starts a simple HTTP server (Network.framework) on port 8080.
-- `MLCBridge` is a stub (echo). Replace with real MLC-LLM calls later.
+- `MLCBridge` loads the packaged `mlc-app-config.json` and calls MLC-LLM through `MLCSwift`.
 - Uses **XcodeGen** in CI to generate the Xcode project from `project.yml`.
 - GitHub Actions builds an **unsigned IPA** artifact you can sideload with **Sideloadly**.
 
-**Endpoints**
-- `POST /api/generate` with JSON: `{ "prompt": "안녕?" }` → returns `{ "text": "echo: 안녕?" }`
+**Runtime / API**
+- Health probe: `GET /health` → `{ "ok": true }`
+- Text generation: `POST /api/generate`
+
+  ```json
+  {
+    "messages": [
+      { "role": "system", "content": "You are a helpful assistant." },
+      { "role": "user", "content": "안녕?" }
+    ],
+    "max_tokens": 128,
+    "temperature": 0.2
+  }
+  ```
+
+  Response (fields omitted when not available):
+
+  ```json
+  {
+    "text": "안녕하세요! ...",
+    "model": "gemma-3-4b-it-q4bf16_1-MLC",
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 15,
+      "completion_tokens": 42,
+      "total_tokens": 57,
+      "extra": {
+        "prefill_tokens_per_second": 210.3,
+        "decode_tokens_per_second": 32.4
+      }
+    }
+  }
+  ```
+
+  - `prompt` is still accepted for quick tests: `{ "prompt": "간단 테스트" }`.
+  - Invalid payloads receive HTTP 400 with `{ "error": "..." }`.
+  - Inference failures surface as HTTP 500 with error strings from the bridge.
+
+**MLC 패키징 준비**
+
+1. Python 3.9+ 환경에서 [MLC-LLM iOS 패키징 가이드](https://mlc.ai/mlc-llm/docs/install/ios.html)를 참고해 `mlc_llm` CLI를 설치합니다. (예: `pip install --pre --extra-index-url https://mlc.ai/wheels mlc-llm-nightly`)
+2. `mlc-llm` 소스코드를 내려받고 환경 변수를 지정합니다.
+
+   ```bash
+   git clone https://github.com/mlc-ai/mlc-llm.git ../mlc-llm
+   export MLC_LLM_SOURCE_DIR="$(pwd)/../mlc-llm"
+   ```
+
+3. 이 저장소 루트에서 아래 스크립트를 실행하면 `dist/` 폴더 안에 모델 번들과 라이브러리, `MLCSwift.xcframework`가 내려받아집니다.
+
+```bash
+./Scripts/prepare_mlc_assets.sh
+```
+
+   - 결과물은 `dist/bundle/mlc-app-config.json`과 `dist/bundle/<model_id>/...` 구조를 형성합니다.
+   - 앱은 `model_list[0]` 항목을 자동으로 읽어 해당 모델을 로드합니다.
 
 **Local build (optional, if you have macOS)**
 ```bash
@@ -19,6 +73,7 @@ open MLCServerApp.xcodeproj
 
 **CI build**
 - Push this repo to GitHub.
+- Ensure `dist/`에 패키징된 파일이 포함되도록 [Git LFS](https://git-lfs.com) 또는 별도 아티팩트 저장소를 활용하세요. (저장소에는 기본적으로 비어있는 `.gitignore`만 포함되어 있습니다.)
 - Run the `build-ios-ipa` workflow.
 - Download the artifact `MLCServerApp-unsigned` → `*.ipa`.
 

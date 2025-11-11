@@ -1,18 +1,11 @@
 {
-  "version": "0.1",
-  "models": [
+  "device": "iphone",
+  "model_list": [
     {
       "model": "HF://mlc-ai/gemma-3-4b-it-q4bf16_1-MLC",
-      "quantization": "prequantized",
-      "target": "ios",
-      "overrides": {
-        "pipeline": "generation",
-        "max_window_size": 4096
-      }
+      "model_id": "gemma-3-4b-it-q4bf16_1-MLC",
+      "estimated_vram_bytes": 3500000000,
+      "bundle_weight": true
     }
-  ],
-  "bundle": {
-    "app_config_name": "mlc-app-config.json",
-    "symlink": false
-  }
+  ]
 }

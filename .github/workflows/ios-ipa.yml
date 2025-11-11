@@ -33,7 +33,7 @@ jobs:
           echo "== mlc_llm check =="
           python -c "import mlc_llm, sys; print('mlc_llm:', mlc_llm.__file__); print(sys.version)"
 
-      - name: Clone MLC source (with submodules) & patch CMake, then package
+      - name: Clone MLC source (with submodules)
         env:
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
         run: |
@@ -42,65 +42,14 @@ jobs:
           git clone --depth=1 --recurse-submodules https://github.com/mlc-ai/mlc-llm.git "$MLC_LLM_SOURCE_DIR"
           git -C "$MLC_LLM_SOURCE_DIR" submodule update --init --recursive
 
-          # (이미 하던) 최소버전 상향 패치들 ...
-          # ... (네 기존 sed/perl 패치들 유지)
-
-          # ✅ cmake 정책 플래그는 "configure" 호출에만 붙이고, "--build"에는 절대 붙이지 않기
-          # 기존: sed로 무조건 주입 → 문제
-          # 새로: "--build"가 없는 라인에만 주입
-          awk '
-            /cmake/ {
-              if ($0 ~ /--build/) {
-                print $0;                 # build 호출은 그대로
-              } else {
-                sub(/cmake[[:space:]]+/, "cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ");
-                print $0;                 # configure 호출에만 정책 플래그 삽입
-              }
-              next
-            }
-            { print $0 }
-          ' "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh" > "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh.tmp"
-          mv "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh.tmp" "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
-          chmod +x "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
-
-          # ✅ "--build ... -j" → "--build ... --parallel" 로 교체 (BSD sed 호환)
-          sed -E -i '' 's/(cmake[[:space:]]+--build[^\\n]*)([[:space:]]-j([[:space:]]*[0-9]+)?)/\1 --parallel\3/g' \
-            "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
-
-          # (디버그) cmake 라인들 출력 확인
-          echo "== prepare_libs.sh cmake lines (after patch) =="
-          grep -nE 'cmake[[:space:]]+--build|cmake -DCMAKE_POLICY_VERSION_MINIMUM' "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh" || true
-
-          # 패키징 실행
-          python -m mlc_llm package \
-            --package-config mlc-package-config.json \
-            --mlc-llm-source-dir "$MLC_LLM_SOURCE_DIR" \
-            --output dist
-
-          echo "== DIST CONTENTS =="
-          find dist -maxdepth 2 -type f | sort
-
-      - name: Force-write mlc-app-config.json into dist/bundle & validate
+      - name: Package MLC assets
+        env:
+          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
         run: |
           set -euxo pipefail
-          # 1) 런타임 앱 설정 강제 주입
-          cat > dist/bundle/mlc-app-config.json <<'JSON'
-          {
-            "device": "iphone",
-            "model_list": [
-              {
-                "model": "HF://mlc-ai/gemma-3-4b-it-q4bf16_1-MLC",
-                "model_id": "gemma-3-4b-it-q4bf16_1-MLC",
-                "estimated_vram_bytes": 3500000000,
-                "bundle_weight": true
-              }
-            ]
-          }
-          JSON
-
-          # 2) 최소 필요 파일 존재 확인
-          test -f dist/bundle/mlc-app-config.json
-          find dist/bundle -type f | head -n 50
+          Scripts/prepare_mlc_assets.sh
+          echo "== DIST CONTENTS =="
+          find dist -maxdepth 2 -type f | sort
 
       - name: Generate Xcode project via XcodeGen
         run: |
@@ -123,36 +72,32 @@ jobs:
             -archivePath build/App.xcarchive \
             clean archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            OTHER_LDFLAGS='$(inherited) -lc++'
+            IPHONEOS_DEPLOYMENT_TARGET=18.5 \
+            OTHER_LDFLAGS='$(inherited) -lc++ -lc++abi -Wl,-unwindlib=none'
 
 
       - name: Create unsigned IPA (manual zip)
         run: |
-          set -e # 오류 발생 시 즉시 중단
-          
-          # 1. 경로 설정 (MLCServerApp.app 이름이 스킴/타겟 이름과 일치해야 함)
+          set -euo pipefail
+
           APP_PATH="build/App.xcarchive/Products/Applications/MLCServerApp.app"
           IPA_NAME="MLCServerApp-unsigned.ipa"
+          WORK_DIR="build/manual-ipa"
+          PAYLOAD_DIR="$WORK_DIR/Payload"
           EXPORT_DIR="build/export"
 
-          # 2. Payload 디렉토리 생성
-          mkdir -p Payload
+          rm -rf "$WORK_DIR"
+          mkdir -p "$PAYLOAD_DIR"
+          cp -R "$APP_PATH" "$PAYLOAD_DIR/"
 
-          # 3. .app 파일을 Payload 디렉토리로 복사
-          cp -R "$APP_PATH" Payload/
+          (cd "$WORK_DIR" && /usr/bin/zip -qry "$IPA_NAME" Payload)
 
-          # 4. Payload 디렉토리를 .ipa 파일로 압축
-          /usr/bin/zip -qry "$IPA_NAME" Payload
-
-          # 5. 임시 Payload 디렉토리 삭제
-          rm -rf Payload
-
-          # 6. 아티팩트 업로드를 위해 export 디렉토리 생성 및 이동
           mkdir -p "$EXPORT_DIR"
-          mv "$IPA_NAME" "$EXPORT_DIR/"
+          mv "$WORK_DIR/$IPA_NAME" "$EXPORT_DIR/"
+          rm -rf "$WORK_DIR"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: MLCServerApp-unsigned
-          path: build/export/*.ipa # 수동으로 생성한 IPA 경로
+          path: build/export/*.ipa

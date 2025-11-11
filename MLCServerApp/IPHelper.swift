@@ -1,49 +1,28 @@
+
 import Foundation
-import Network
 
 enum IPHelper {
     static func localIPv4() -> String? {
-        let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
-        let queue = DispatchQueue(label: "ip.monitor")
         var address: String?
-        let sema = DispatchSemaphore(value: 0)
-
-        monitor.pathUpdateHandler = { _ in
-            monitor.cancel()
-            address = fetchIPv4()
-            sema.signal()
-        }
-        monitor.start(queue: queue)
-        _ = sema.wait(timeout: .now() + 0.5)
-        return address ?? fetchIPv4()
-    }
-
-    private static func fetchIPv4() -> String? {
-        var addr: String?
-        var ifaddrPtr: UnsafeMutablePointer<ifaddrs>? = nil
-        if getifaddrs(&ifaddrPtr) == 0, let first = ifaddrPtr {
-            var ptr = first
-            while true {
-                let ifa = ptr.pointee
-                if let sa = ifa.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) {
-                    let name = String(cString: ifa.ifa_name)
-                    if name != "lo0" {
-                        var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                        getnameinfo(ifa.ifa_addr, socklen_t(ifa.ifa_addr.pointee.sa_len),
-                                    &hostBuffer, socklen_t(hostBuffer.count),
-                                    nil, 0, NI_NUMERICHOST)
-                        addr = String(cString: hostBuffer)
-                        break
-                    }
-                }
-                if let next = ifa.ifa_next {
-                    ptr = next
-                } else {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>? = nil
+        if getifaddrs(&ifaddr) == 0 {
+            var ptr = ifaddr
+            while ptr != nil {
+                defer { ptr = ptr?.pointee.ifa_next }
+                guard let interface = ptr?.pointee else { continue }
+                let addrFamily = interface.ifa_addr.pointee.sa_family
+                if addrFamily == UInt8(AF_INET) {
+                    let name = String(cString: interface.ifa_name)
+                    if name == "lo0" { continue }
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                                &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
+                    address = String(cString: hostname)
                     break
                 }
             }
-            freeifaddrs(ifaddrPtr)
+            freeifaddrs(ifaddr)
         }
-        return addr
+        return address
     }
 }
