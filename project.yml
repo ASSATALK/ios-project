@@ -1,35 +1,44 @@
-
 name: MLCServerApp
 options:
+  minimumXcodeGenVersion: 2.41.0
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "18.5"
+
 settings:
   base:
-    DEVELOPMENT_TEAM: ""
-    CODE_SIGN_STYLE: Manual
-    TARGETED_DEVICE_FAMILY: "1,2"
-    PRODUCT_BUNDLE_IDENTIFIER: com.example.mlcserver
-    INFOPLIST_FILE: MLCServerApp/Info.plist
-    OTHER_LDFLAGS:
-      - "-Wl,-all_load"
-      - "-lmodel_iphone"
-      - "-lmlc_llm"
-      - "-ltvm_runtime"
-      - "-ltokenizers_cpp"
-      - "-lsentencepiece"
-      - "-ltokenizers_c"
-    LIBRARY_SEARCH_PATHS:
-      - "$(SRCROOT)/dist/lib"
+    PRODUCT_BUNDLE_IDENTIFIER: com.example.MLCServerApp
+    INFOPLIST_FILE: Info.plist
+    SWIFT_VERSION: 5.10
+    IPHONEOS_DEPLOYMENT_TARGET: 18.5
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_BITCODE: NO
+    CLANG_ENABLE_OBJC_ARC: YES
+
 targets:
   MLCServerApp:
     type: application
     platform: iOS
     sources:
-      - path: MLCServerApp
+      - path: .
+        excludes:
+          - External/**
+          - build/**
+          - ios-ipa.yml
+          - ios-project.zip
+          - dist/ios/**   # 프레임워크 링크를 요구하지 않음(이번 빌드 리스크 최소화)
+    resources:
+      # ✅ 패키저 산출물(bundle)을 앱에 포함 (모델과 메탈 커널 등 실제 추론 리소스)
       - path: dist/bundle
+        optional: false
         type: folder
+
     scheme:
       testTargets: []
+      gatherCoverageData: false
+
     settings:
-      base:
-        CODE_SIGN_IDENTITY: iPhone Developer
+      configs:
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"

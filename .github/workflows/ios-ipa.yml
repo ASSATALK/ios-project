@@ -80,7 +80,27 @@ jobs:
           echo "== DIST CONTENTS =="
           find dist -maxdepth 2 -type f | sort
 
+      - name: Force-write mlc-app-config.json into dist/bundle & validate
+        run: |
+          set -euxo pipefail
+          # 1) 런타임 앱 설정 강제 주입
+          cat > dist/bundle/mlc-app-config.json <<'JSON'
+          {
+            "device": "iphone",
+            "model_list": [
+              {
+                "model": "HF://mlc-ai/gemma-3-4b-it-q4bf16_1-MLC",
+                "model_id": "gemma-3-4b-it-q4bf16_1-MLC",
+                "estimated_vram_bytes": 3500000000,
+                "bundle_weight": true
+              }
+            ]
+          }
+          JSON
 
+          # 2) 최소 필요 파일 존재 확인
+          test -f dist/bundle/mlc-app-config.json
+          find dist/bundle -type f | head -n 50
 
       - name: Generate Xcode project via XcodeGen
         run: |

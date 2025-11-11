@@ -1,66 +1,42 @@
-
 import Foundation
-#if canImport(MLCSwift)
-import MLCSwift
-#endif
 
-actor MLCManager {
-    static let shared = MLCManager()
-    #if canImport(MLCSwift)
-    private var engine: MLCEngine?
-    #endif
-
-    func ensureLoaded() async throws {
-        #if canImport(MLCSwift)
-        if engine != nil { return }
-        let e = MLCEngine()
-
-        guard let bundleURL = Bundle.main.resourceURL?.appendingPathComponent("bundle", isDirectory: true) else {
-            throw NSError(domain: "MLC", code: -1, userInfo: [NSLocalizedDescriptionKey: "bundle/ not found"])
-        }
-        let configURL = bundleURL.appendingPathComponent("mlc-app-config.json")
-        var modelLib = "model_iphone"
-        if let data = try? Data(contentsOf: configURL),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let lib = obj["model_lib"] as? String, !lib.isEmpty {
-            modelLib = lib
-        }
-
-        await e.reload(modelPath: bundleURL.path, modelLib: modelLib)
-        self.engine = e
-        #else
-        #endif
-    }
-
-    func generate(_ prompt: String) async throws -> String {
-        #if canImport(MLCSwift)
-        try await ensureLoaded()
-        guard let engine = self.engine else { return "엔진 로드 실패" }
-
-        var out = ""
-        for await res in await engine.chat.completions.create(
-            messages: [ChatCompletionMessage(role: .user, content: prompt)]
-        ) {
-            if let delta = res.choices.first?.delta.content?.asText() {
-                out += delta
-            }
-        }
-        return out
-        #else
-        return "echo: " + prompt
-        #endif
-    }
+public struct GenerateRequest: Decodable {
+    public let prompt: String
+    public let max_tokens: Int?
+    public let temperature: Double?
 }
 
-enum MLCBridge {
-    static func generate(prompt: String, completion: @escaping (String) -> Void) {
-        Task {
-            do {
-                let txt = try await MLCManager.shared.generate(prompt)
-                completion(txt)
-            } catch {
-                completion("에러: \(error)")
-            }
-        }
+public enum MLCBridge {
+    // 실제 MLC 연동 경로 (MLCSwift 추가하면 자동 사용)
+    #if canImport(MLCSwift)
+    public static func isReady() -> Bool { MLCManager.shared.isReady }
+    public static func warmupIfNeeded() { MLCManager.shared.warmupIfNeeded() }
+
+    public static func generate(prompt: String,
+                                maxTokens: Int = 128,
+                                temperature: Double = 0.7,
+                                onToken: @escaping (String) -> Void) async throws {
+        try await MLCManager.shared.generate(prompt: prompt,
+                                             maxTokens: maxTokens,
+                                             temperature: temperature,
+                                             onToken: onToken)
     }
+    #else
+    // 안전 모드(MLC 미포함): 모의 스트리밍
+    public static func isReady() -> Bool { true }
+    public static func warmupIfNeeded() { /* no-op */ }
+
+    public static func generate(prompt: String,
+                                maxTokens: Int = 128,
+                                temperature: Double = 0.7,
+                                onToken: @escaping (String) -> Void) async throws {
+        // 간단 NDJSON 토큰 스트리밍 모사
+        let fake = "You said: \(prompt.prefix(200))"
+        for ch in fake.split(separator: " ") {
+            onToken(String(ch))
+            try await Task.sleep(nanoseconds: 60_000_000) // 60ms
+        }
+        onToken("[END]")
+    }
+    #endif
 }
