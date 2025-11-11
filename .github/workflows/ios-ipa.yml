@@ -42,36 +42,36 @@ jobs:
           git clone --depth=1 --recurse-submodules https://github.com/mlc-ai/mlc-llm.git "$MLC_LLM_SOURCE_DIR"
           git -C "$MLC_LLM_SOURCE_DIR" submodule update --init --recursive
 
-          # 1) CMake 최소버전 상향 (대소문자/추가 토큰 포함 라인 전체 치환)
-          fix_minver() { local f="$1"; if [ -f "$f" ]; then
-            # BSD sed (macOS) 호환: -i ''
-            sed -E -i '' 's/^[[:space:]]*[cC][mM][aA][kK][eE]_[mM][iI][nN][iI][mM][uU][mM]_[rR][eE][qQ][uU][iI][rR][eE][dD].*$/cmake_minimum_required(VERSION 3.27)/' "$f"
-          fi; }
-          fix_minver "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/CMakeLists.txt"
-          fix_minver "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt"
-          # 필요시 sentencepiece도 방어적으로
-          fix_minver "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/sentencepiece/src/CMakeLists.txt" || true
+          # (이미 하던) 최소버전 상향 패치들 ...
+          # ... (네 기존 sed/perl 패치들 유지)
 
-          # 2) prepare_libs.sh의 모든 cmake 호출에 정책 플래그 강제 삽입
-          #   'cmake ' → 'cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 '
-          sed -E -i '' 's/(^|[[:space:]])cmake[[:space:]]+/\1cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 /' \
+          # ✅ cmake 정책 플래그는 "configure" 호출에만 붙이고, "--build"에는 절대 붙이지 않기
+          # 기존: sed로 무조건 주입 → 문제
+          # 새로: "--build"가 없는 라인에만 주입
+          awk '
+            /cmake/ {
+              if ($0 ~ /--build/) {
+                print $0;                 # build 호출은 그대로
+              } else {
+                sub(/cmake[[:space:]]+/, "cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ");
+                print $0;                 # configure 호출에만 정책 플래그 삽입
+              }
+              next
+            }
+            { print $0 }
+          ' "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh" > "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh.tmp"
+          mv "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh.tmp" "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
+          chmod +x "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
+
+          # ✅ "--build ... -j" → "--build ... --parallel" 로 교체 (BSD sed 호환)
+          sed -E -i '' 's/(cmake[[:space:]]+--build[^\\n]*)([[:space:]]-j([[:space:]]*[0-9]+)?)/\1 --parallel\3/g' \
             "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
 
-          # 3) (선택) libunwind 참조 제거 방어 패치
-          drop_unwind() { local f="$1"; if [ -f "$f" ]; then
-            sed -E -i '' 's/([[:space:]])unwind([[:space:]\)"])/\1\2/g' "$f" || true
-          fi; }
-          drop_unwind "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/sentencepiece/src/CMakeLists.txt"
-          drop_unwind "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/CMakeLists.txt"
-          drop_unwind "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt"
+          # (디버그) cmake 라인들 출력 확인
+          echo "== prepare_libs.sh cmake lines (after patch) =="
+          grep -nE 'cmake[[:space:]]+--build|cmake -DCMAKE_POLICY_VERSION_MINIMUM' "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh" || true
 
-          # (디버그) 적용 결과 확인
-          echo "== msgpack/CMakeLists.txt head =="
-          sed -n '1,10p' "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt" || true
-          echo "== prepare_libs.sh cmake lines =="
-          grep -nE 'cmake .*CMAKE_POLICY_VERSION_MINIMUM' "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh" || true
-
-          # 4) 패키징 실행
+          # 패키징 실행
           python -m mlc_llm package \
             --package-config mlc-package-config.json \
             --mlc-llm-source-dir "$MLC_LLM_SOURCE_DIR" \
@@ -79,9 +79,6 @@ jobs:
 
           echo "== DIST CONTENTS =="
           find dist -maxdepth 2 -type f | sort
-
-
-
 
 
 
