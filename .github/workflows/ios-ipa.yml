@@ -1,0 +1,137 @@
+
+name: build-ios-ipa
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure clean xcodeproj
+        run: rm -rf MLCServerApp.xcodeproj
+
+      - name: Install tools (brew)
+        run: |
+          brew update
+          brew install xcodegen git-lfs cmake ninja
+          git lfs install
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install mlc-llm prebuilt wheels
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --pre -U -f https://mlc.ai/wheels \
+            mlc-llm-nightly-cpu mlc-ai-nightly-cpu
+          echo "== mlc_llm check =="
+          python -c "import mlc_llm, sys; print('mlc_llm:', mlc_llm.__file__); print(sys.version)"
+
+      - name: Clone MLC source (with submodules) & patch CMake, then package
+        env:
+          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
+        run: |
+          set -euxo pipefail
+          mkdir -p External
+          git clone --depth=1 --recurse-submodules https://github.com/mlc-ai/mlc-llm.git "$MLC_LLM_SOURCE_DIR"
+          git -C "$MLC_LLM_SOURCE_DIR" submodule update --init --recursive
+
+          # (기존) CMake 최소버전 패치 ...
+          perl -0777 -pe 's/cmake_minimum_required\s*\(\s*VERSION\s*[0-9.]+\s*\)/cmake_minimum_required(VERSION 3.5...3.27)/i' \
+            -i "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/CMakeLists.txt" || true
+          perl -0777 -pe 's/cmake_minimum_required\s*\(\s*VERSION\s*[0-9.]+\s*\)/cmake_minimum_required(VERSION 3.5...3.27)/i' \
+            -i "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt" || true
+
+          # (기존) prepare_libs.sh에 정책 플래그 주입 ...
+          perl -0777 -pe 's/(cmake\s+[^\\n]*)(\n)/$1 -DCMAKE_POLICY_VERSION_MINIMUM=3.5$2/;' \
+            -i "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh"
+
+          # ✅ (신규) libunwind 제거 패치
+          patch_unwind() {
+            local f="$1"
+            if [ -f "$f" ]; then
+              sed -E -i '' 's/([[:space:]])unwind([[:space:]\)"])/\1\2/g' "$f" || true
+            fi
+          }
+          patch_unwind "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/sentencepiece/src/CMakeLists.txt"
+          patch_unwind "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/CMakeLists.txt"
+          patch_unwind "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt"
+          grep -R --line-number -E '[^A-Za-z]unwind([^A-Za-z]|$)' "$MLC_LLM_SOURCE_DIR" || true
+
+          # (디버그) 확인
+          head -n 5 "$MLC_LLM_SOURCE_DIR/3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt" || true
+          grep -n "CMAKE_POLICY_VERSION_MINIMUM" "$MLC_LLM_SOURCE_DIR/ios/prepare_libs.sh" || true
+
+          # (기존) 패키징 실행
+          python -m mlc_llm package \
+            --package-config mlc-package-config.json \
+            --mlc-llm-source-dir "$MLC_LLM_SOURCE_DIR" \
+            --output dist
+
+          echo "== DIST CONTENTS =="
+          find dist -maxdepth 2 -type f | sort
+
+
+
+
+
+      - name: Generate Xcode project via XcodeGen
+        run: |
+          xcodegen generate
+          ls -la
+
+
+
+      - name: Resolve Packages
+        run: |
+          xcodebuild -resolvePackageDependencies -project MLCServerApp.xcodeproj || true
+
+      - name: Archive (iphoneos, no code sign)
+        run: |
+          xcodebuild \
+            -project MLCServerApp.xcodeproj \
+            -scheme MLCServerApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/App.xcarchive \
+            clean archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            OTHER_LDFLAGS='$(inherited) -lc++ -lc++abi -Wl,-unwindlib=none'
+
+
+      - name: Create unsigned IPA (manual zip)
+        run: |
+          set -e # 오류 발생 시 즉시 중단
+          
+          # 1. 경로 설정 (MLCServerApp.app 이름이 스킴/타겟 이름과 일치해야 함)
+          APP_PATH="build/App.xcarchive/Products/Applications/MLCServerApp.app"
+          IPA_NAME="MLCServerApp-unsigned.ipa"
+          EXPORT_DIR="build/export"
+
+          # 2. Payload 디렉토리 생성
+          mkdir -p Payload
+
+          # 3. .app 파일을 Payload 디렉토리로 복사
+          cp -R "$APP_PATH" Payload/
+
+          # 4. Payload 디렉토리를 .ipa 파일로 압축
+          /usr/bin/zip -qry "$IPA_NAME" Payload
+
+          # 5. 임시 Payload 디렉토리 삭제
+          rm -rf Payload
+
+          # 6. 아티팩트 업로드를 위해 export 디렉토리 생성 및 이동
+          mkdir -p "$EXPORT_DIR"
+          mv "$IPA_NAME" "$EXPORT_DIR/"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLCServerApp-unsigned
+          path: build/export/*.ipa # 수동으로 생성한 IPA 경로
