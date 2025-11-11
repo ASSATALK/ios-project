@@ -47,7 +47,7 @@ jobs:
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
         run: |
           set -euxo pipefail
-          Scripts/prepare_mlc_assets.sh
+          bash Scripts/prepare_mlc_assets.sh
           echo "== DIST CONTENTS =="
           find dist -maxdepth 2 -type f | sort
 
@@ -73,7 +73,7 @@ jobs:
             clean archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             IPHONEOS_DEPLOYMENT_TARGET=18.5 \
-            OTHER_LDFLAGS='$(inherited) -lc++ -lc++abi -Wl,-unwindlib=none'
+            OTHER_LDFLAGS='$(inherited) -lc++'
 
 
       - name: Create unsigned IPA (manual zip)

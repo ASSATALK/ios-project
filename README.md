@@ -61,8 +61,10 @@
 ./Scripts/prepare_mlc_assets.sh
 ```
 
-   - 결과물은 `dist/bundle/mlc-app-config.json`과 `dist/bundle/<model_id>/...` 구조를 형성합니다.
-   - 앱은 `model_list[0]` 항목을 자동으로 읽어 해당 모델을 로드합니다.
+- 결과물은 `dist/bundle/mlc-app-config.json`과 `dist/bundle/<model_id>/...` 구조를 형성합니다.
+- 앱은 `model_list[0]` 항목을 자동으로 읽어 해당 모델을 로드합니다.
+- 스크립트는 `cmake_minimum_required` 범위를 3.5…3.27로 확장하고 `prepare_libs.sh`에 `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`를 추가하며
+  iOS 번들 빌드에서 충돌을 일으키던 `-lunwind` 플래그를 제거합니다. 따라서 과거 CMake 호환성 오류가 다시 발생하지 않습니다.
 
 **Local build (optional, if you have macOS)**
 ```bash
