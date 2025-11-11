@@ -47,7 +47,7 @@ jobs:
           PATH: /usr/local/opt/python@3.11/bin:$PATH
         run: |
           set -euxo pipefail
-          bash Scripts/prepare_mlc_assets.sh
+          /bin/bash Scripts/prepare_mlc_assets.sh
 
       - name: Generate Xcode project via XcodeGen
         run: |
