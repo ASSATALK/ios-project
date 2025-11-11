@@ -31,8 +31,13 @@ else
 fi
 
 if ! command -v python3 &>/dev/null; then
-  echo "[prepare_mlc_assets] python3 명령을 찾을 수 없습니다." >&2
-  exit 1
+  if command -v python &>/dev/null; then
+    echo "[prepare_mlc_assets] python3 대신 python을 사용합니다."
+    alias python3=python
+  else
+    echo "[prepare_mlc_assets] python3 명령을 찾을 수 없습니다." >&2
+    exit 1
+  fi
 fi
 
 apply_text_patch() {
@@ -63,7 +68,7 @@ if original != updated:
     path.write_text(updated)
     print(f"[prepare_mlc_assets] 패치 적용: {description} -> {path}")
 else:
-    print(f"[prepare_mlc_assets] 패치 건너뜀(이미 적용됨): {description} -> {path}")
+    print(f"[prepare_mlc_assets] 패치 적용됨(변화 없음): {description} -> {path}")
 PY
 }
 

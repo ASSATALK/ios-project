@@ -38,10 +38,13 @@ jobs:
           mkdir -p External
           git clone --depth=1 --recurse-submodules https://github.com/mlc-ai/mlc-llm.git "$MLC_LLM_SOURCE_DIR"
           git -C "$MLC_LLM_SOURCE_DIR" submodule update --init --recursive
+          # Clean CMake cache to ensure patches are applied correctly
+          rm -rf "$MLC_LLM_SOURCE_DIR/build" 2>/dev/null || true
 
       - name: Package MLC assets
         env:
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
+          PATH: /usr/local/opt/python@3.11/bin:$PATH
         run: |
           set -euxo pipefail
           bash Scripts/prepare_mlc_assets.sh
