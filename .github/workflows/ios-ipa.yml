@@ -103,7 +103,7 @@ jobs:
             -archivePath build/App.xcarchive \
             clean archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            OTHER_LDFLAGS='$(inherited) -lc++ -lc++abi -Wl,-unwindlib=none'
+            OTHER_LDFLAGS='$(inherited) -lc++'
 
 
       - name: Create unsigned IPA (manual zip)
