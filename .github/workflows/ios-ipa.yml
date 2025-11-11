@@ -41,13 +41,70 @@ jobs:
           # Clean CMake cache to ensure patches are applied correctly
           rm -rf "$MLC_LLM_SOURCE_DIR/build" 2>/dev/null || true
 
+      - name: Apply MLC patches
+        env:
+          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
+        run: |
+          python3 << 'EOF'
+          import pathlib
+          import re
+          
+          root = pathlib.Path("${{ env.MLC_LLM_SOURCE_DIR }}")
+          
+          # Patch 1: cmake_minimum_required 범위 확장
+          cmake_patch_files = [
+              root / "3rdparty/tokenizers-cpp/CMakeLists.txt",
+              root / "3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt",
+              root / "3rdparty/tokenizers-cpp/sentencepiece/src/CMakeLists.txt",
+          ]
+          
+          cmake_pattern = re.compile(r"cmake_minimum_required\s*\(\s*VERSION\s*[0-9.]+\s*\)", re.IGNORECASE)
+          
+          for f in cmake_patch_files:
+              if f.exists():
+                  content = f.read_text()
+                  new_content = cmake_pattern.sub("cmake_minimum_required(VERSION 3.5...3.27)", content, count=1)
+                  if content != new_content:
+                      f.write_text(new_content)
+                      print(f"✓ Patched: {f}")
+          
+          # Patch 2: prepare_libs.sh 정책 플래그
+          prepare_libs = root / "ios/prepare_libs.sh"
+          if prepare_libs.exists():
+              content = prepare_libs.read_text()
+              pattern = re.compile(r"(cmake\s+[^\n]*?)(\n)", re.MULTILINE)
+              def repl(match):
+                  line = match.group(1)
+                  if "-DCMAKE_POLICY_VERSION_MINIMUM" in line:
+                      return match.group(0)
+                  return f"{line} -DCMAKE_POLICY_VERSION_MINIMUM=3.5{match.group(2)}"
+              new_content = pattern.sub(repl, content, count=1)
+              if content != new_content:
+                  prepare_libs.write_text(new_content)
+                  print(f"✓ Patched: {prepare_libs}")
+          
+          # Patch 3: libunwind 제거
+          unwind_pattern = re.compile(r"(\s)-lunwind(?=\b)")
+          unwind_word_pattern = re.compile(r"(\s)unwind(?=[\s\)\"])")
+          
+          for f in cmake_patch_files:
+              if f.exists():
+                  content = f.read_text()
+                  new_content = unwind_pattern.sub(r"\1", content)
+                  new_content = unwind_word_pattern.sub(r"\1", new_content)
+                  if content != new_content:
+                      f.write_text(new_content)
+                      print(f"✓ Patched (libunwind removed): {f}")
+          EOF
+
       - name: Package MLC assets
         env:
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
-          PATH: /usr/local/opt/python@3.11/bin:$PATH
         run: |
-          set -euxo pipefail
-          /bin/bash Scripts/prepare_mlc_assets.sh
+          python -m mlc_llm package \
+            --package-config mlc-package-config.json \
+            --output dist \
+            --mlc-llm-source-dir "$MLC_LLM_SOURCE_DIR"
 
       - name: Generate Xcode project via XcodeGen
         run: |
