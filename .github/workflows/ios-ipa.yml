@@ -1,115 +1,83 @@
-name: Build MLCChat iOS (unsigned IPA)
+name: Build unsigned iOS LLM IPA
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Homebrew dependencies
-        run: |
-          brew update
-          brew install cmake git-lfs
-          git lfs install
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Install Ruby & CocoaPods
+        uses: ruby/setup-ruby@v1
         with:
-          python-version: '3.11'
+          ruby-version: '3.2'
 
-      - name: Install mlc_llm Python package
+      - name: Install CocoaPods
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade mlc_llm
+          gem install cocoapods
+          pod repo update
 
-      # 여기에서 MLCChat의 mlc-package-config.json을 네가 원하는 모델로 덮어쓴다.
-      # 아래는 예시로 gemma-3-1b-it-q4f16_1-MLC 사용.
-      - name: Write mlc-package-config.json for MLCChat
-        working-directory: ios/MLCChat
+      - name: Pod install
+        working-directory: ios
         run: |
-          cat > mlc-package-config.json << 'EOF'
-          {
-            "device": "iphone",
-            "model_list": [
-              {
-                "model": "HF://mlc-ai/gemma-3-1b-it-q4f16_1-MLC",
-                "model_id": "gemma-3-1b-q4f16_1-MLC",
-                "estimated_vram_bytes": 3000000000,
-                "overrides": {
-                  "context_window_size": 1024,
-                  "prefill_chunk_size": 128
-                }
-              }
-            ]
-          }
-          EOF
+          pod install
 
-      # (선택) dist 캐시 – 모델/설정 자주 안 바뀌면 빌드 시간 줄이고 싶을 때 유용
-      - name: Restore dist cache
-        id: dist-cache
-        uses: actions/cache@v4
-        with:
-          path: ios/MLCChat/dist
-          key: mlcchat-dist-${{ hashFiles('ios/MLCChat/mlc-package-config.json') }}
-
-      - name: Package model for iOS with mlc_llm
-        if: steps.dist-cache.outputs.cache-hit != 'true'
-        working-directory: ios/MLCChat
-        run: |
-          mlc_llm package
-
-      # cache miss일 때 새로 만든 dist를 캐시에 저장 (위 cache 스텝이 자동으로 처리)
-
-      - name: Show dist contents (debug)
-        working-directory: ios/MLCChat
-        run: |
-          echo "=== dist/lib ==="
-          ls -R dist/lib || true
-          echo "=== dist/bundle ==="
-          ls -R dist/bundle || true
-
-      # 여기부터는 Xcode로 MLCChat 앱을 아카이브
-      - name: Build iOS archive (unsigned)
+      - name: Detect Xcode scheme automatically
+        id: detect_scheme
+        working-directory: ios
         run: |
           set -euo pipefail
+          # InferenceExample.xcworkspace 안의 첫 번째 Scheme 이름 추출
+          SCHEME=$(xcodebuild -list -workspace InferenceExample.xcworkspace \
+            | sed -n '/Schemes:/,$p' | sed -n '2p' | xargs)
+          echo "Detected scheme: $SCHEME"
+          echo "SCHEME=$SCHEME" >> $GITHUB_ENV
+
+      - name: Build archive (unsigned)
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          echo "Using scheme: $SCHEME"
+
           xcodebuild \
-            -project ios/MLCChat/MLCChat.xcodeproj \
-            -scheme MLCChat \
+            -workspace InferenceExample.xcworkspace \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -archivePath build/App.xcarchive \
+            clean archive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            clean archive
+            CODE_SIGNING_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
 
-      # 네가 준 스니펫을 MLCChat 이름에 맞게 수정한 단계
-      - name: Create unsigned IPA (manual zip)
+      - name: Create unsigned IPA
+        working-directory: ios
         run: |
           set -euo pipefail
+          APP_NAME="$SCHEME"
+          APP_PATH="build/App.xcarchive/Products/Applications/${APP_NAME}.app"
+          IPA_NAME="${APP_NAME}-unsigned"
 
-          APP_PATH="build/App.xcarchive/Products/Applications/MLCChat.app"
-          IPA_NAME="MLCChat-unsigned.ipa"
-          WORK_DIR="build/manual-ipa"
-          PAYLOAD_DIR="$WORK_DIR/Payload"
-          EXPORT_DIR="build/export"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "❌ App path not found: $APP_PATH"
+            ls -R build || true
+            exit 1
+          fi
 
-          rm -rf "$WORK_DIR"
-          mkdir -p "$PAYLOAD_DIR"
-          cp -R "$APP_PATH" "$PAYLOAD_DIR/"
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
 
-          (cd "$WORK_DIR" && /usr/bin/zip -qry "$IPA_NAME" Payload)
+          zip -r "$IPA_NAME.ipa" Payload
 
-          mkdir -p "$EXPORT_DIR"
-          mv "$WORK_DIR/$IPA_NAME" "$EXPORT_DIR/"
-          rm -rf "$WORK_DIR"
+          echo "Created IPA: $IPA_NAME.ipa"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MLCChat-unsigned
-          path: build/export/*.ipa
+          name: ios-llm-unsigned-ipa
+          path: ios/*.ipa
