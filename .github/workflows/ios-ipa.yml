@@ -65,6 +65,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_IDENTITY="" \
             DEVELOPMENT_TEAM=""
+            ENABLE_USER_SCRIPT_SANDBOXING=NO  # ⬅️ 이 줄을 추가하세요!
 
       - name: Create unsigned IPA
         working-directory: ios
