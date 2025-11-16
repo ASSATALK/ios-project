@@ -1,16 +1,2 @@
-# Xcode / build
 DerivedData/
-build/
-*.xcuserstate
-*.xcuserdata/
-
-# SwiftPM
-.build/
-
-# CocoaPods (나중에 쓴다면)
-Pods/
-*.xcworkspace
-
-# fastlane artifacts
-fastlane/report.xml
-fastlane/test_output/
+xcuserdata/

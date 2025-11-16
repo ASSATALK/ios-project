@@ -1,142 +1,99 @@
+name: Build MLCChat iOS (unsigned IPA)
 
-name: build-ios-ipa
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
+  workflow_dispatch: {}
 
 jobs:
-  build:
-    runs-on: macos-15
+  build-ios:
+    runs-on: macos-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Ensure clean xcodeproj
-        run: rm -rf MLCServerApp.xcodeproj
-
-      - name: Install tools (brew)
+      - name: Install Homebrew dependencies
         run: |
           brew update
-          brew install xcodegen git-lfs cmake ninja
+          brew install cmake git-lfs
           git lfs install
 
-      - name: Set up Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install mlc-llm prebuilt wheels
+      - name: Install mlc_llm Python package
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --pre -U -f https://mlc.ai/wheels mlc-llm-nightly-cpu mlc-ai-nightly-cpu
+          python -m pip install --upgrade mlc_llm
 
-      - name: Clone MLC source (with submodules)
-        env:
-          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
+      # 여기에서 MLCChat의 mlc-package-config.json을 네가 원하는 모델로 덮어쓴다.
+      # 아래는 예시로 gemma-3-1b-it-q4f16_1-MLC 사용.
+      - name: Write mlc-package-config.json for MLCChat
+        working-directory: ios/MLCChat
         run: |
-          set -euxo pipefail
-          mkdir -p External
-          git clone --depth=1 --recurse-submodules https://github.com/mlc-ai/mlc-llm.git "$MLC_LLM_SOURCE_DIR"
-          git -C "$MLC_LLM_SOURCE_DIR" submodule update --init --recursive
-          # Clean CMake cache to ensure patches are applied correctly
-          rm -rf "$MLC_LLM_SOURCE_DIR/build" 2>/dev/null || true
-
-      - name: Apply MLC patches
-        env:
-          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
-        run: |
-          python3 << 'EOF'
-          import pathlib
-          import re
-          
-          root = pathlib.Path("${{ env.MLC_LLM_SOURCE_DIR }}")
-          
-          # Patch 1: cmake_minimum_required 범위 확장
-          cmake_patch_files = [
-              root / "3rdparty/tokenizers-cpp/CMakeLists.txt",
-              root / "3rdparty/tokenizers-cpp/msgpack/CMakeLists.txt",
-              root / "3rdparty/tokenizers-cpp/sentencepiece/src/CMakeLists.txt",
-          ]
-          
-          cmake_pattern = re.compile(r"cmake_minimum_required\s*\(\s*VERSION\s*[0-9.]+\s*\)", re.IGNORECASE)
-          
-          for f in cmake_patch_files:
-              if f.exists():
-                  content = f.read_text()
-                  new_content = cmake_pattern.sub("cmake_minimum_required(VERSION 3.5...3.27)", content, count=1)
-                  if content != new_content:
-                      f.write_text(new_content)
-                      print(f"✓ Patched: {f}")
-          
-          # Patch 2: prepare_libs.sh 정책 플래그
-          prepare_libs = root / "ios/prepare_libs.sh"
-          if prepare_libs.exists():
-              content = prepare_libs.read_text()
-              pattern = re.compile(r"(cmake\s+[^\n]*?)(\n)", re.MULTILINE)
-              def repl(match):
-                  line = match.group(1)
-                  if "-DCMAKE_POLICY_VERSION_MINIMUM" in line:
-                      return match.group(0)
-                  return f"{line} -DCMAKE_POLICY_VERSION_MINIMUM=3.5{match.group(2)}"
-              new_content = pattern.sub(repl, content, count=1)
-              if content != new_content:
-                  prepare_libs.write_text(new_content)
-                  print(f"✓ Patched: {prepare_libs}")
-          
-          # Patch 3: libunwind 제거
-          unwind_pattern = re.compile(r"(\s)-lunwind(?=\b)")
-          unwind_word_pattern = re.compile(r"(\s)unwind(?=[\s\)\"])")
-          
-          for f in cmake_patch_files:
-              if f.exists():
-                  content = f.read_text()
-                  new_content = unwind_pattern.sub(r"\1", content)
-                  new_content = unwind_word_pattern.sub(r"\1", new_content)
-                  if content != new_content:
-                      f.write_text(new_content)
-                      print(f"✓ Patched (libunwind removed): {f}")
+          cat > mlc-package-config.json << 'EOF'
+          {
+            "device": "iphone",
+            "model_list": [
+              {
+                "model": "HF://mlc-ai/gemma-3-1b-it-q4f16_1-MLC",
+                "model_id": "gemma-3-1b-q4f16_1-MLC",
+                "estimated_vram_bytes": 3000000000,
+                "overrides": {
+                  "context_window_size": 1024,
+                  "prefill_chunk_size": 128
+                }
+              }
+            ]
+          }
           EOF
 
-      - name: Package MLC assets
-        env:
-          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}/External/mlc-llm
+      # (선택) dist 캐시 – 모델/설정 자주 안 바뀌면 빌드 시간 줄이고 싶을 때 유용
+      - name: Restore dist cache
+        id: dist-cache
+        uses: actions/cache@v4
+        with:
+          path: ios/MLCChat/dist
+          key: mlcchat-dist-${{ hashFiles('ios/MLCChat/mlc-package-config.json') }}
+
+      - name: Package model for iOS with mlc_llm
+        if: steps.dist-cache.outputs.cache-hit != 'true'
+        working-directory: ios/MLCChat
         run: |
-          python -m mlc_llm package \
-            --package-config mlc-package-config.json \
-            --output dist \
-            --mlc-llm-source-dir "$MLC_LLM_SOURCE_DIR"
+          mlc_llm package
 
-      - name: Generate Xcode project via XcodeGen
+      # cache miss일 때 새로 만든 dist를 캐시에 저장 (위 cache 스텝이 자동으로 처리)
+
+      - name: Show dist contents (debug)
+        working-directory: ios/MLCChat
         run: |
-          xcodegen generate
-          ls -la
+          echo "=== dist/lib ==="
+          ls -R dist/lib || true
+          echo "=== dist/bundle ==="
+          ls -R dist/bundle || true
 
-
-
-      - name: Resolve Packages
+      # 여기부터는 Xcode로 MLCChat 앱을 아카이브
+      - name: Build iOS archive (unsigned)
         run: |
-          xcodebuild -resolvePackageDependencies -project MLCServerApp.xcodeproj || true
-
-      - name: Archive (iphoneos, no code sign)
-        run: |
+          set -euo pipefail
           xcodebuild \
-            -project MLCServerApp.xcodeproj \
-            -scheme MLCServerApp \
+            -project ios/MLCChat/MLCChat.xcodeproj \
+            -scheme MLCChat \
             -configuration Release \
             -sdk iphoneos \
             -archivePath build/App.xcarchive \
-            clean archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            IPHONEOS_DEPLOYMENT_TARGET=18.5 \
-            OTHER_LDFLAGS='$(inherited) -lc++'
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            clean archive
 
-
+      # 네가 준 스니펫을 MLCChat 이름에 맞게 수정한 단계
       - name: Create unsigned IPA (manual zip)
         run: |
           set -euo pipefail
 
-          APP_PATH="build/App.xcarchive/Products/Applications/MLCServerApp.app"
-          IPA_NAME="MLCServerApp-unsigned.ipa"
+          APP_PATH="build/App.xcarchive/Products/Applications/MLCChat.app"
+          IPA_NAME="MLCChat-unsigned.ipa"
           WORK_DIR="build/manual-ipa"
           PAYLOAD_DIR="$WORK_DIR/Payload"
           EXPORT_DIR="build/export"
@@ -154,5 +111,5 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MLCServerApp-unsigned
+          name: MLCChat-unsigned
           path: build/export/*.ipa
