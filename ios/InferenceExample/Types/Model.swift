@@ -76,13 +76,13 @@ enum Model: CaseIterable {
         )
       case .gemma3_4:
         return ModelMetadata(
-          pathName: "gemma3-4b-it-int4-web",
-          pathExtension: "task",
+          pathName: "gemma-3n-E2B-it-int4",
+          pathExtension: "litertlm",
           licenseAcknowledgedKey: "gemma-license",
-          displayName: "Gemma 3 4B CPU",
+          displayName: "Gemma 3n E2B CPU",
           downloadUrlString:
-            "https://huggingface.co/litert-community/Gemma3-4B-IT/resolve/main/gemma3-4b-it-int4-web.task",
-          licenseUrlString: "https://huggingface.co/litert-community/Gemma3-4B-IT",
+            "https://huggingface.co/google/gemma-3n-E2B-it-litert-lm/resolve/main/gemma-3n-E2B-it-int4.litertlm",
+          licenseUrlString: "https://huggingface.co/google/gemma-3n-E4B-it-litert-lm",
           authRequired: true,
           temperature: 1.0,
           topK: 64,
