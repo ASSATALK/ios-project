@@ -31,9 +31,7 @@ jobs:
         working-directory: ios
         run: |
           set -euo pipefail
-          # InferenceExample.xcworkspace 안의 첫 번째 Scheme 이름 추출
-          SCHEME=$(xcodebuild -list -workspace InferenceExample.xcworkspace \
-            | sed -n '/Schemes:/,$p' | sed -n '2p' | xargs)
+          SCHEME=InferenceExample
           echo "Detected scheme: $SCHEME"
           echo "SCHEME=$SCHEME" >> $GITHUB_ENV
 
@@ -60,8 +58,8 @@ jobs:
         run: |
           set -euo pipefail
           APP_NAME="$SCHEME"
-          APP_PATH="build/App.xcarchive/Products/Applications/InferenceExample.app"
-          IPA_NAME="InferenceExample-unsigned"
+          APP_PATH="build/App.xcarchive/Products/Applications/${APP_NAME}.app"
+          IPA_NAME="${APP_NAME}-unsigned"
 
           if [ ! -d "$APP_PATH" ]; then
             echo "❌ App path not found: $APP_PATH"
