@@ -55,9 +55,7 @@ enum Model: CaseIterable {
   case gemma3_4
   case gemma2
   case deepSeek
-  case qwen_2_5_0_5B_Instruct
   case qwen_2_5_1_5B_Instruct
-  case tinyLlama_1_1B
   case llama_3_2_1B
   
   private var metadata: ModelMetadata {
