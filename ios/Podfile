@@ -6,3 +6,13 @@ target 'InferenceExample' do
   pod 'MediaPipeTasksGenAI'
   pod 'GCDWebServer'
 end
+
+# 👇 여기 추가
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      # Xcode 16에서 지원되는 최소 버전으로 맞춰준다
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '12.0'
+    end
+  end
+end
