@@ -60,8 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           APP_NAME="$SCHEME"
-          APP_PATH="build/App.xcarchive/Products/Applications/${APP_NAME}.app"
-          IPA_NAME="${APP_NAME}-unsigned"
+          APP_PATH="build/App.xcarchive/Products/Applications/InferenceExample.app"
+          IPA_NAME="InferenceExample-unsigned"
 
           if [ ! -d "$APP_PATH" ]; then
             echo "❌ App path not found: $APP_PATH"
