@@ -26,6 +26,18 @@ jobs:
         run: |
           pod install
 
+      - name: Patch CocoaPods frameworks script (disable -u)
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          FRAMEWORKS_SCRIPT="Pods/Target Support Files/Pods-InferenceExample/Pods-InferenceExample-frameworks.sh"
+          echo "Patching $FRAMEWORKS_SCRIPT"
+          sed -i '' 's/set -eu/set -e/g' "$FRAMEWORKS_SCRIPT" || true
+          sed -i '' 's/set -u//g' "$FRAMEWORKS_SCRIPT" || true
+          echo "Patched:"
+          head -n 10 "$FRAMEWORKS_SCRIPT"
+
+
       - name: Detect Xcode scheme automatically
         id: detect_scheme
         working-directory: ios
