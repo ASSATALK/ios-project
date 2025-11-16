@@ -61,7 +61,7 @@ enum Model: CaseIterable {
   
   private var metadata: ModelMetadata {
     switch self {
-      case .gemma3:
+      case .gemma3_1:
         return ModelMetadata(
           pathName: "gemma3-1b-it-int4",
           pathExtension: "task",
@@ -70,6 +70,20 @@ enum Model: CaseIterable {
           downloadUrlString:
             "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
           licenseUrlString: "https://huggingface.co/litert-community/Gemma3-1B-IT",
+          authRequired: true,
+          temperature: 1.0,
+          topK: 64,
+          topP: 0.95
+        )
+      case .gemma3_4:
+        return ModelMetadata(
+          pathName: "gemma3-4b-it-int4-web",
+          pathExtension: "task",
+          licenseAcknowledgedKey: "gemma-license",
+          displayName: "Gemma 3 4B CPU",
+          downloadUrlString:
+            "https://huggingface.co/litert-community/Gemma3-4B-IT/resolve/main/gemma3-4b-it-int4-web.task",
+          licenseUrlString: "https://huggingface.co/litert-community/Gemma3-4B-IT",
           authRequired: true,
           temperature: 1.0,
           topK: 64,
@@ -116,17 +130,6 @@ enum Model: CaseIterable {
           topK: 64,
           topP: 0.9
         )
-      case .qwen_2_5_0_5B_Instruct:
-        return ModelMetadata(
-          pathName: "Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280",
-          pathExtension: "task",
-          displayName: "Qwen 2.5 0.5B Instruct",
-          downloadUrlString:
-            "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
-          temperature: 0.95,
-          topK: 40,
-          topP: 1.0
-        )
       case .qwen_2_5_1_5B_Instruct:
         return ModelMetadata(
           pathName: "Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280",
@@ -134,17 +137,6 @@ enum Model: CaseIterable {
           displayName: "Qwen 2.5 1.5B Instruct",
           downloadUrlString:
             "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv1280.task",
-          temperature: 0.95,
-          topK: 40,
-          topP: 1.0
-        )
-      case .tinyLlama_1_1B:
-        return ModelMetadata(
-          pathName: "TinyLlama-1.1B-Chat-v1.0_multi-prefill-seq_q8_ekv1280",
-          pathExtension: "task",
-          displayName: "Tiny Llama 1.1B v1.0",
-          downloadUrlString:
-            "https://huggingface.co/litert-community/TinyLlama-1.1B-Chat-v1.0/resolve/main/TinyLlama-1.1B-Chat-v1.0_multi-prefill-seq_q8_ekv1280.task",
           temperature: 0.95,
           topK: 40,
           topP: 1.0

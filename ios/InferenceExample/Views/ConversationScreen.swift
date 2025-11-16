@@ -17,10 +17,7 @@ import SwiftUI
 
 struct ConversationScreen: View {
   private struct Constants {
-    static let scrollDelayInSeconds = 0.05
     static let alertBackgroundColor = Color.black.opacity(0.3)
-    static let newChatSystemSymbolName = "arrow.clockwise"
-    static let navigationTitle = "Chat with your LLM here"
     static let modelInitializationAlertText = "Model initialization in progress."
   }
 
@@ -29,52 +26,74 @@ struct ConversationScreen: View {
   @ObservedObject
   var viewModel: ConversationViewModel
 
-  @State
-  private var currentUserPrompt = ""
-
-  private enum FocusedField: Hashable {
-    case message
-  }
-
-  @State private var isSheetPresented: Bool = false  // Local state
-
-  @FocusState
-  private var focusedField: FocusedField?
+  @StateObject
+  private var server = LocalLlmServer()
 
   var body: some View {
     ZStack {
-      VStack {
-        ScrollViewReader { scrollViewProxy in
-          List {
-            ForEach(viewModel.messageViewModels) { vm in
-              MessageView(messageViewModel: vm) { messageId in
-                DispatchQueue.main.async {
-                  scrollViewProxy.scrollTo(messageId, anchor: .bottom)
-                }
-              }
+      VStack(spacing: 16) {
+        VStack(spacing: 8) {
+          Text("Local LLM Server")
+            .font(.title2)
+            .bold()
+
+          Text("Model: \(viewModel.modelCategory.name)")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.top, 32)
+
+        Group {
+          if viewModel.downloadRequired {
+            Text("모델 파일이 아직 다운로드되지 않았습니다.\n아래 시트를 통해 모델을 먼저 받아야 합니다.")
+              .font(.footnote)
+              .multilineTextAlignment(.center)
+              .padding()
+          } else if viewModel.currentState == .loadingModel {
+            VStack(spacing: 12) {
+              ProgressView("Model initialization in progress...")
+                .tint(Metadata.globalColor)
+              Text("모델을 초기화하는 중입니다. 잠시만 기다려 주세요.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
             }
+            .padding()
+          } else if server.isRunning {
+            VStack(spacing: 12) {
+              Text("서버가 실행 중입니다.")
+                .font(.headline)
+
+              Text(
+                """
+                같은 네트워크의 다른 기기에서:
+
+                • URL:  http://<아이폰 IP 주소>:8080/generate
+                • Method:  POST
+                • Body (JSON): { "prompt": "Hello" }
+
+                로 요청을 보내면, LLM이 응답을 생성합니다.
+                """
+              )
+              .font(.footnote)
+              .multilineTextAlignment(.leading)
+            }
+            .padding()
+          } else if viewModel.currentState == .done {
+            Text("모델 초기화는 완료되었지만, 서버가 아직 시작되지 않았습니다.")
+              .font(.footnote)
+              .multilineTextAlignment(.center)
+              .padding()
+          } else {
+            Text("모델 상태를 준비하는 중입니다…")
+              .font(.footnote)
+              .multilineTextAlignment(.center)
+              .padding()
           }
-          .listStyle(.plain)
         }
-        .scrollDismissesKeyboard(.immediately)
-        TextTypingView(
-          state: $viewModel.currentState,
-          onSubmitAction: { [weak viewModel] prompt in
-            viewModel?.sendMessage(prompt)
-          },
-          onChangeOfTextAction: { [weak viewModel] prompt in
-            viewModel?.recomputeSizeInTokens(prompt: prompt)
-          })
+
+        Spacer()
       }
-      .navigationTitle("Chat with \(viewModel.modelCategory.name) here")
-      .toolbar {
-        ToolbarItem(placement: .primaryAction) {
-          Button(action: viewModel.startNewChat) {
-            Image(systemName: Constants.newChatSystemSymbolName)
-          }
-          .environment(\.isEnabled, !viewModel.shouldDisableClicksForStartNewChat())
-        }
-      }
+      .navigationTitle("Server for \(viewModel.modelCategory.name)")
       .navigationBarTitleDisplayMode(.inline)
       .toolbarBackground(Metadata.globalColor, for: .navigationBar)
       .toolbarBackground(.visible, for: .navigationBar)
@@ -121,6 +140,12 @@ struct ConversationScreen: View {
     }
     .onDisappear { [weak viewModel] in
       viewModel?.clearModel()
+      server.stop()
+    }
+    .onChange(of: viewModel.currentState) { _, newState in
+      if newState == .done && !server.isRunning {
+        server.start(with: viewModel)
+      }
     }
   }
 
@@ -290,10 +315,10 @@ struct TextTypingView: View {
           focusedField = nil
         }
         .submitLabel(.return)
-        .onChange(of: state) { oldValue, newValue in
-          focusedField = state == .done ? .message : nil
+        .onChange(of: state) { _, newValue in
+          focusedField = newValue == .done ? .message : nil
         }
-        .onChange(of: content) { oldValue, newValue in
+        .onChange(of: content) { _, newValue in
           /// Only trigger updates when the VM is not generating response.
           /// Specifically to handle the case when the content is set to "" after prompt is submitted for inference.
           /// Recomputation should only happen from the VM during response generation.

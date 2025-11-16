@@ -1,4 +1,4 @@
-// Copyright 2024 The MediaPipe Authors.
+// Copyright 2024 The Mediapipe Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -119,6 +119,30 @@ class ConversationViewModel: ObservableObject {
     }
   }
 
+  /// UI용 채팅이 아니라, 서버에서 1회 요청/응답용으로 사용하는 stateless 생성 함수.
+  /// 기존 `chat` / `messageViewModels` 를 전혀 건드리지 않는다.
+  func generateOnceStateless(_ text: String) async throws -> String {
+    guard let model else {
+      throw InferenceError.onDeviceModelNotInitialized
+    }
+
+    do {
+      let chat = try Chat(model: model)
+      let responseStream = try await chat.sendMessage(text)
+
+      var fullText = ""
+      for try await partial in responseStream {
+        // 모델이 reasoning marker를 쓰는 경우를 고려해서 동일 규칙으로 후처리
+        fullText += trimmedOfMarkers(text: partial)
+      }
+      return fullText
+    } catch let error as InferenceError {
+      throw error
+    } catch {
+      throw InferenceError.mediaPipeTasksError(error: error)
+    }
+  }
+
   /// Queries the LLM session with the given text prompt asynchronously. If the prompt completes
   /// successfully, it updates the published `messages` with the new partial response
   /// continuously until the response generation completes. In case of an error, sets the
@@ -195,7 +219,8 @@ class ConversationViewModel: ObservableObject {
 
     currentState = .promptSubmitted
     defer {
-      currentState = remainingSizeInTokens == 0 ? .nonCriticalError(error: .tokensExceeded) : .done
+      currentState =
+        remainingSizeInTokens == 0 ? .nonCriticalError(error: .tokensExceeded) : .done
     }
 
     ///Add the user's message to the chat .
@@ -284,7 +309,7 @@ class ConversationViewModel: ObservableObject {
       ? text.replacingOccurrences(
         of: modelCategory.thinkingMarkerEnd!, with: "") : text
   }
-  
+
   private func decrementRemainingSizeInTokens() {
     remainingSizeInTokens = max(0, remainingSizeInTokens - 1)
   }
