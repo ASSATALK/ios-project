@@ -414,7 +414,7 @@ final class LocalLlmServer: ObservableObject {
       else {
         let response = GCDWebServerDataResponse(
           jsonObject: ["error": "Invalid request. Expected JSON {\"prompt\": \"...\"}."]
-        )
+        )!
         response.statusCode = 400
         return response
       }
@@ -427,16 +427,17 @@ final class LocalLlmServer: ObservableObject {
           "prompt": prompt,
           "output": output,
         ]
-        return GCDWebServerDataResponse(jsonObject: body)
+        return GCDWebServerDataResponse(jsonObject: body)!   // ← 여기도 ! 추가
 
       case .failure(let error):
         let response = GCDWebServerDataResponse(
           jsonObject: ["error": "\(error)"]
-        )
+        )!
         response.statusCode = 500
         return response
       }
     }
+
 
     webServer.start(withPort: 8080, bonjourName: nil)
     isRunning = true
