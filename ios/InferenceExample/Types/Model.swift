@@ -51,7 +51,8 @@ struct ModelMetadata {
 
 /// Holds the metadata of the models that can be used.
 enum Model: CaseIterable {
-  case gemma3
+  case gemma3_1
+  case gemma3_4
   case gemma2
   case deepSeek
   case qwen_2_5_0_5B_Instruct

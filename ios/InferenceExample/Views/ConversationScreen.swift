@@ -14,10 +14,16 @@
 
 import LaTeXSwiftUI
 import SwiftUI
+import Foundation
+import Combine
+import GCDWebServer
 
 struct ConversationScreen: View {
   private struct Constants {
+    static let scrollDelayInSeconds = 0.05
     static let alertBackgroundColor = Color.black.opacity(0.3)
+    static let newChatSystemSymbolName = "arrow.clockwise"
+    static let navigationTitle = "Chat with your LLM here"
     static let modelInitializationAlertText = "Model initialization in progress."
   }
 
@@ -26,74 +32,52 @@ struct ConversationScreen: View {
   @ObservedObject
   var viewModel: ConversationViewModel
 
-  @StateObject
-  private var server = LocalLlmServer()
+  @State
+  private var currentUserPrompt = ""
+
+  private enum FocusedField: Hashable {
+    case message
+  }
+
+  @State private var isSheetPresented: Bool = false  // Local state
+
+  @FocusState
+  private var focusedField: FocusedField?
 
   var body: some View {
     ZStack {
-      VStack(spacing: 16) {
-        VStack(spacing: 8) {
-          Text("Local LLM Server")
-            .font(.title2)
-            .bold()
-
-          Text("Model: \(viewModel.modelCategory.name)")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.top, 32)
-
-        Group {
-          if viewModel.downloadRequired {
-            Text("모델 파일이 아직 다운로드되지 않았습니다.\n아래 시트를 통해 모델을 먼저 받아야 합니다.")
-              .font(.footnote)
-              .multilineTextAlignment(.center)
-              .padding()
-          } else if viewModel.currentState == .loadingModel {
-            VStack(spacing: 12) {
-              ProgressView("Model initialization in progress...")
-                .tint(Metadata.globalColor)
-              Text("모델을 초기화하는 중입니다. 잠시만 기다려 주세요.")
-                .font(.footnote)
-                .multilineTextAlignment(.center)
+      VStack {
+        ScrollViewReader { scrollViewProxy in
+          List {
+            ForEach(viewModel.messageViewModels) { vm in
+              MessageView(messageViewModel: vm) { messageId in
+                DispatchQueue.main.async {
+                  scrollViewProxy.scrollTo(messageId, anchor: .bottom)
+                }
+              }
             }
-            .padding()
-          } else if server.isRunning {
-            VStack(spacing: 12) {
-              Text("서버가 실행 중입니다.")
-                .font(.headline)
-
-              Text(
-                """
-                같은 네트워크의 다른 기기에서:
-
-                • URL:  http://<아이폰 IP 주소>:8080/generate
-                • Method:  POST
-                • Body (JSON): { "prompt": "Hello" }
-
-                로 요청을 보내면, LLM이 응답을 생성합니다.
-                """
-              )
-              .font(.footnote)
-              .multilineTextAlignment(.leading)
-            }
-            .padding()
-          } else if viewModel.currentState == .done {
-            Text("모델 초기화는 완료되었지만, 서버가 아직 시작되지 않았습니다.")
-              .font(.footnote)
-              .multilineTextAlignment(.center)
-              .padding()
-          } else {
-            Text("모델 상태를 준비하는 중입니다…")
-              .font(.footnote)
-              .multilineTextAlignment(.center)
-              .padding()
           }
+          .listStyle(.plain)
         }
-
-        Spacer()
+        .scrollDismissesKeyboard(.immediately)
+        TextTypingView(
+          state: $viewModel.currentState,
+          onSubmitAction: { [weak viewModel] prompt in
+            viewModel?.sendMessage(prompt)
+          },
+          onChangeOfTextAction: { [weak viewModel] prompt in
+            viewModel?.recomputeSizeInTokens(prompt: prompt)
+          })
       }
-      .navigationTitle("Server for \(viewModel.modelCategory.name)")
+      .navigationTitle("Chat with \(viewModel.modelCategory.name) here")
+      .toolbar {
+        ToolbarItem(placement: .primaryAction) {
+          Button(action: viewModel.startNewChat) {
+            Image(systemName: Constants.newChatSystemSymbolName)
+          }
+          .environment(\.isEnabled, !viewModel.shouldDisableClicksForStartNewChat())
+        }
+      }
       .navigationBarTitleDisplayMode(.inline)
       .toolbarBackground(Metadata.globalColor, for: .navigationBar)
       .toolbarBackground(.visible, for: .navigationBar)
@@ -140,12 +124,6 @@ struct ConversationScreen: View {
     }
     .onDisappear { [weak viewModel] in
       viewModel?.clearModel()
-      server.stop()
-    }
-    .onChange(of: viewModel.currentState) { _, newState in
-      if newState == .done && !server.isRunning {
-        server.start(with: viewModel)
-      }
     }
   }
 
@@ -315,10 +293,10 @@ struct TextTypingView: View {
           focusedField = nil
         }
         .submitLabel(.return)
-        .onChange(of: state) { _, newValue in
-          focusedField = newValue == .done ? .message : nil
+        .onChange(of: state) { oldValue, newValue in
+          focusedField = state == .done ? .message : nil
         }
-        .onChange(of: content) { _, newValue in
+        .onChange(of: content) { oldValue, newValue in
           /// Only trigger updates when the VM is not generating response.
           /// Specifically to handle the case when the content is set to "" after prompt is submitted for inference.
           /// Recomputation should only happen from the VM during response generation.
@@ -403,5 +381,101 @@ extension View {
     } message: { error in
       Text(error.failureReason ?? "Some error occured")
     }
+  }
+}
+
+/// ConversationViewModel을 이용해서 /generate 엔드포인트를 제공하는 로컬 HTTP 서버
+final class LocalLlmServer: ObservableObject {
+
+  private let webServer = GCDWebServer()
+
+  @Published
+  private(set) var isRunning: Bool = false
+
+  private weak var viewModel: ConversationViewModel?
+
+  func start(with viewModel: ConversationViewModel) {
+    guard !isRunning else { return }
+
+    self.viewModel = viewModel
+
+    // POST /generate
+    webServer.addHandler(
+      forMethod: "POST",
+      path: "/generate",
+      request: GCDWebServerDataRequest.self
+    ) { [weak self] request in
+      guard
+        let self,
+        let vm = self.viewModel,
+        let dataRequest = request as? GCDWebServerDataRequest,
+        let json = dataRequest.jsonObject as? [String: Any],
+        let prompt = json["prompt"] as? String
+      else {
+        let response = GCDWebServerDataResponse(
+          jsonObject: ["error": "Invalid request. Expected JSON {\"prompt\": \"...\"}."]
+        )
+        response.statusCode = 400
+        return response
+      }
+
+      let result = self.generateBlocking(prompt: prompt, with: vm)
+
+      switch result {
+      case .success(let output):
+        let body: [String: Any] = [
+          "prompt": prompt,
+          "output": output,
+        ]
+        return GCDWebServerDataResponse(jsonObject: body)
+
+      case .failure(let error):
+        let response = GCDWebServerDataResponse(
+          jsonObject: ["error": "\(error)"]
+        )
+        response.statusCode = 500
+        return response
+      }
+    }
+
+    webServer.start(withPort: 8080, bonjourName: nil)
+    isRunning = true
+    print("🌐 Local LLM HTTP server started on port 8080")
+  }
+
+  func stop() {
+    guard isRunning else { return }
+    webServer.stop()
+    isRunning = false
+    print("🛑 Local LLM HTTP server stopped")
+  }
+
+  /// GCDWebServer 핸들러는 동기이기 때문에, 내부에서 async → sync 브릿지를 만든다.
+  private func generateBlocking(
+    prompt: String,
+    with viewModel: ConversationViewModel
+  ) -> Result<String, Error> {
+    var result: Result<String, Error>?
+    let semaphore = DispatchSemaphore(value: 0)
+
+    Task {
+      do {
+        let text = try await viewModel.generateOnceStateless(prompt)
+        result = .success(text)
+      } catch {
+        result = .failure(error)
+      }
+      semaphore.signal()
+    }
+
+    semaphore.wait()
+
+    return result ?? .failure(
+      NSError(
+        domain: "LocalLlmServer",
+        code: -1,
+        userInfo: [NSLocalizedDescriptionKey: "No result from LLM"]
+      )
+    )
   }
 }
