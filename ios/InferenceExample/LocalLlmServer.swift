@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import GCDWebServer
 
 /// ConversationViewModel을 이용해서 /generate 엔드포인트를 제공하는 로컬 HTTP 서버
@@ -75,7 +76,7 @@ final class LocalLlmServer: ObservableObject {
     var result: Result<String, Error>?
     let semaphore = DispatchSemaphore(value: 0)
 
-    Task { @MainActor in
+    Task {
       do {
         let text = try await viewModel.generateOnceStateless(prompt)
         result = .success(text)
