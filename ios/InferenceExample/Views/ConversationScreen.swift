@@ -17,7 +17,7 @@ import SwiftUI
 import Foundation
 import Combine
 import GCDWebServer
-
+import Darwin   // getifaddrs, AF_INET, etc.
 
 struct ConversationScreen: View {
   private struct Constants {
@@ -67,19 +67,35 @@ struct ConversationScreen: View {
               Text("서버가 실행 중입니다.")
                 .font(.headline)
 
-              Text(
-                """
-                같은 네트워크의 다른 기기에서:
+              VStack(alignment: .leading, spacing: 8) {
+                if server.ipAddress == "Unknown" {
+                  Text(
+                    """
+                    현재 아이폰의 IP 주소를 확인할 수 없습니다.
+                    Wi-Fi에 연결되어 있는지 확인해 주세요.
+                    """
+                  )
+                  .font(.footnote)
+                } else {
+                  Text("현재 아이폰 IP 주소: \(server.ipAddress)")
+                    .font(.footnote)
+                    .bold()
+                }
 
-                • URL:  http://<아이폰 IP 주소>:8080/generate
-                • Method:  POST
-                • Body (JSON): { "prompt": "Hello" }
+                Text(
+                  """
+                  같은 네트워크의 다른 기기에서:
 
-                로 요청을 보내면, LLM이 응답을 생성합니다.
-                """
-              )
-              .font(.footnote)
-              .multilineTextAlignment(.leading)
+                  • URL:  http://\(server.ipAddress):8080/generate
+                  • Method:  POST
+                  • Body (JSON): { "prompt": "Hello" }
+
+                  로 요청을 보내면, LLM이 응답을 생성합니다.
+                  """
+                )
+                .font(.footnote)
+                .multilineTextAlignment(.leading)
+              }
             }
             .padding()
           } else if viewModel.currentState == .done {
@@ -418,6 +434,10 @@ final class LocalLlmServer: ObservableObject {
   @Published
   private(set) var isRunning: Bool = false
 
+  /// 현재 기기의 로컬 IP 주소 (Wi-Fi 기준, en0)
+  @Published
+  var ipAddress: String = "Unknown"
+
   private weak var viewModel: ConversationViewModel?
 
   func start(with viewModel: ConversationViewModel) {
@@ -453,7 +473,7 @@ final class LocalLlmServer: ObservableObject {
           "prompt": prompt,
           "output": output,
         ]
-        return GCDWebServerDataResponse(jsonObject: body)!   // ← 여기도 ! 추가
+        return GCDWebServerDataResponse(jsonObject: body)!
 
       case .failure(let error):
         let response = GCDWebServerDataResponse(
@@ -464,10 +484,16 @@ final class LocalLlmServer: ObservableObject {
       }
     }
 
-
     webServer.start(withPort: 8080, bonjourName: nil)
+
+    // 서버 시작 후 현재 Wi-Fi IP 조회
+    let ip = getWiFiAddress() ?? "Unknown"
+    DispatchQueue.main.async {
+      self.ipAddress = ip
+    }
+
     isRunning = true
-    print("🌐 Local LLM HTTP server started on port 8080")
+    print("🌐 Local LLM HTTP server started at http://\(ipAddress):8080")
   }
 
   func stop() {
@@ -504,5 +530,41 @@ final class LocalLlmServer: ObservableObject {
         userInfo: [NSLocalizedDescriptionKey: "No result from LLM"]
       )
     )
+  }
+
+  /// 현재 기기의 Wi-Fi 인터페이스(en0)의 IPv4/IPv6 주소를 반환
+  private func getWiFiAddress() -> String? {
+    var address: String?
+
+    var ifaddr: UnsafeMutablePointer<ifaddrs>?
+    if getifaddrs(&ifaddr) == 0 {
+      var ptr = ifaddr
+      while ptr != nil {
+        let interface = ptr!.pointee
+        let addrFamily = interface.ifa_addr.pointee.sa_family
+
+        if addrFamily == UInt8(AF_INET) || addrFamily == UInt8(AF_INET6) {
+          let name = String(cString: interface.ifa_name)
+          if name == "en0" { // Wi-Fi 인터페이스
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(
+              interface.ifa_addr,
+              socklen_t(interface.ifa_addr.pointee.sa_len),
+              &hostname,
+              socklen_t(hostname.count),
+              nil,
+              0,
+              NI_NUMERICHOST
+            )
+            address = String(cString: hostname)
+          }
+        }
+
+        ptr = interface.ifa_next
+      }
+      freeifaddrs(ifaddr)
+    }
+
+    return address
   }
 }
