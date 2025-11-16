@@ -4,5 +4,5 @@ target 'InferenceExample' do
   # Comment the next line if you don't want to use dynamic frameworks
   use_frameworks!
   pod 'MediaPipeTasksGenAI'
-  pod 'GCDWebServer', '~> 3.7'
+  pod 'GCDWebServer'
 end
