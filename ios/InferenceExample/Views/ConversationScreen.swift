@@ -448,88 +448,92 @@ final class LocalLlmServer: ObservableObject {
     let jsonEncoder = JSONEncoder()
 
     // POST /generate (Streaming)
+    // *** FIX: Use the 'asyncProcessBlock' overload explicitly to resolve compiler ambiguity ***
     webServer.addHandler(
       forMethod: "POST",
       path: "/generate",
-      request: GCDWebServerDataRequest.self
-    ) { [weak self] request in
-      // 1. viewModel 및 요청 유효성 검사
-      guard
-        let self,
-        let vm = self.viewModel
-      else {
-        let response = GCDWebServerDataResponse(
-          jsonObject: ["error": "Server internal error: ViewModel not found."]
-        )!
-        response.statusCode = 500
-        return response
-      }
-
-      guard
-        let dataRequest = request as? GCDWebServerDataRequest,
-        let json = dataRequest.jsonObject as? [String: Any],
-        let prompt = json["prompt"] as? String
-      else {
-        let response = GCDWebServerDataResponse(
-          jsonObject: ["error": "Invalid request. Expected JSON {\"prompt\": \"...\"}."]
-        )!
-        response.statusCode = 400
-        return response
-      }
-
-      // 2. 스트리밍 응답 (Server-Sent Events) 생성
-      let response = GCDWebServerStreamedResponse(
-        contentType: "text/event-stream",
-        asyncStreamWriter: { writer in
-          do {
-            // 3. ViewModel에서 후처리된 텍스트 스트림을 가져옴
-            let responseStream = try await vm.generateStreamStateless(prompt)
-
-            // 4. 스트림을 순회하며 SSE 이벤트 전송
-            for try await partialText in responseStream {
-              guard !partialText.isEmpty else { continue }
-              
-              // data: {"output": "..."}\n\n
-              let chunkPayload = ["output": partialText]
-              let jsonData = try jsonEncoder.encode(chunkPayload)
-              let jsonString = String(data: jsonData, encoding: .utf8)!
-              let sseMessage = "data: \(jsonString)\n\n"
-              
-              await writer.write(data: sseMessage.data(using: .utf8)!)
-            }
-            
-            // 5. 스트림 종료 이벤트 전송
-            // event: done\ndata: {}\n\n
-            let donePayload = ["output": ""] // 빈 객체 전송
-            let jsonData = try jsonEncoder.encode(donePayload)
-            let jsonString = String(data: jsonData, encoding: .utf8)!
-            let doneMessage = "event: done\ndata: \(jsonString)\n\n"
-            await writer.write(data: doneMessage.data(using: .utf8)!)
-
-          } catch {
-            // 6. 스트리밍 중 오류 발생 시 오류 이벤트 전송
-            // event: error\ndata: {"error": "..."}\n\n
-            let errorPayload = ["error": error.localizedDescription]
-            if let jsonData = try? jsonEncoder.encode(errorPayload),
-              let jsonString = String(data: jsonData, encoding: .utf8)
-            {
-              let sseMessage = "event: error\ndata: \(jsonString)\n\n"
-              await writer.write(data: sseMessage.data(using: .utf8)!)
-            }
-          }
-          
-          // 7. 스트림 닫기
-          await writer.close()
+      request: GCDWebServerDataRequest.self,
+      asyncProcessBlock: { [weak self] request, completionBlock in
+        // 1. viewModel 및 요청 유효성 검사
+        guard
+          let self,
+          let vm = self.viewModel
+        else {
+          let response = GCDWebServerDataResponse(
+            jsonObject: ["error": "Server internal error: ViewModel not found."]
+          )!
+          response.statusCode = 500
+          completionBlock(response) // FIX: Call completion block
+          return                   // FIX: Return Void
         }
-      )
-      
-      // 프록시나 클라이언트가 응답을 버퍼링하지 않도록 설정
-      response.setValue("no-cache", forAdditionalHeader: "Cache-Control")
-      response.setValue("keep-alive", forAdditionalHeader: "Connection")
 
-      // 스트림 응답 객체를 즉시 반환
-      return response
-    }
+        guard
+          let dataRequest = request as? GCDWebServerDataRequest,
+          let json = dataRequest.jsonObject as? [String: Any],
+          let prompt = json["prompt"] as? String
+        else {
+          let response = GCDWebServerDataResponse(
+            jsonObject: ["error": "Invalid request. Expected JSON {\"prompt\": \"...\"}."]
+          )!
+          response.statusCode = 400
+          completionBlock(response) // FIX: Call completion block
+          return                   // FIX: Return Void
+        }
+
+        // 2. 스트리밍 응답 (Server-Sent Events) 생성
+        let response = GCDWebServerStreamedResponse(
+          contentType: "text/event-stream",
+          asyncStreamWriter: { writer in
+            do {
+              // 3. ViewModel에서 후처리된 텍스트 스트림을 가져옴
+              let responseStream = try await vm.generateStreamStateless(prompt)
+
+              // 4. 스트림을 순회하며 SSE 이벤트 전송
+              for try await partialText in responseStream {
+                guard !partialText.isEmpty else { continue }
+
+                // data: {"output": "..."}\n\n
+                let chunkPayload = ["output": partialText]
+                let jsonData = try jsonEncoder.encode(chunkPayload)
+                let jsonString = String(data: jsonData, encoding: .utf8)!
+                let sseMessage = "data: \(jsonString)\n\n"
+
+                await writer.write(data: sseMessage.data(using: .utf8)!)
+              }
+
+              // 5. 스트림 종료 이벤트 전송
+              // event: done\ndata: {}\n\n
+              let donePayload = ["output": ""] // 빈 객체 전송
+              let jsonData = try jsonEncoder.encode(donePayload)
+              let jsonString = String(data: jsonData, encoding: .utf8)!
+              let doneMessage = "event: done\ndata: \(jsonString)\n\n"
+              await writer.write(data: doneMessage.data(using: .utf8)!)
+
+            } catch {
+              // 6. 스트리밍 중 오류 발생 시 오류 이벤트 전송
+              // event: error\ndata: {"error": "..."}\n\n
+              let errorPayload = ["error": error.localizedDescription]
+              if let jsonData = try? jsonEncoder.encode(errorPayload),
+                let jsonString = String(data: jsonData, encoding: .utf8)
+              {
+                let sseMessage = "event: error\ndata: \(jsonString)\n\n"
+                await writer.write(data: sseMessage.data(using: .utf8)!)
+              }
+            }
+
+            // 7. 스트림 닫기
+            await writer.close()
+          }
+        )
+
+        // 프록시나 클라이언트가 응답을 버퍼링하지 않도록 설정
+        response.setValue("no-cache", forAdditionalHeader: "Cache-Control")
+        response.setValue("keep-alive", forAdditionalHeader: "Connection")
+
+        // 스트림 응답 객체를 completion block으로 전달
+        completionBlock(response) // FIX: Call completion block
+      }
+    ) // End of addHandler
 
     webServer.start(withPort: 8080, bonjourName: nil)
 
