@@ -430,12 +430,74 @@ extension View {
 /// ConversationViewModel을 이용해서 /generate 엔드포인트를 제공하는 로컬 HTTP 서버
 final class LocalLlmServer: ObservableObject {
 
+  /// 비동기 PUSH 스트림(AsyncStream)을 동기 PULL API(streamBlock)에 연결하기 위한 스레드 안전 큐
+  private final class DataQueue {
+    private var buffer = [Data]()
+    private let lock = NSCondition()
+    private var isFinished = false
+    private var streamError: Error?
+
+    /// [Producer] (Async Task)
+    /// 비동기 스트림에서 받은 데이터 청크를 버퍼에 추가하고 대기 중인 Consumer(streamBlock)에 신호를 보냅니다.
+    func push(_ data: Data) {
+      lock.lock()
+      defer { lock.unlock() }
+      guard !isFinished else { return } // 이미 종료되었으면 더 이상 데이터를 받지 않음
+
+      buffer.append(data)
+      lock.signal() // 대기 중인 pull() 메서드를 깨움
+    }
+
+    /// [Producer] (Async Task)
+    /// 스트림이 종료되었음을 알리고, 에러가 있다면 저장한 뒤 대기 중인 Consumer(streamBlock)에 신호를 보냅니다.
+    func finish(error: Error? = nil) {
+      lock.lock()
+      defer { lock.unlock() }
+      guard !isFinished else { return } // 중복 finish 방지
+
+      isFinished = true
+      streamError = error
+      lock.signal() // 대기 중인 pull() 메서드를 깨움
+    }
+
+    /// [Consumer] (GCDWebServer Thread - streamBlock)
+    /// 다음 데이터 청크를 동기적으로 가져옵니다.
+    /// - 데이터가 있으면: 즉시 반환합니다.
+    /// - 데이터가 없지만 스트림이 끝나지 않았으면: push() 또는 finish()가 호출될 때까지 스레드를 대기시킵니다.
+    /// - 스트림이 종료되었으면: nil을 반환하여 EOF(End-Of-File)를 알립니다.
+    /// - 스트림이 오류로 종료되었으면: Error를 throw합니다.
+    func pull() throws -> Data? {
+      lock.lock()
+      defer { lock.unlock() }
+
+      // 버퍼가 비어있고 스트림이 아직 끝나지 않았으면, 신호가 올 때까지 대기
+      while buffer.isEmpty && !isFinished {
+        lock.wait() // NSCondition.wait()는 lock을 원자적으로 풀고, 신호를 받으면 다시 lock을 잡음
+      }
+
+      // 대기에서 깨어남 (데이터가 push되었거나, 스트림이 finish되었음)
+
+      // 1. 에러가 발생하며 종료된 경우
+      if let error = streamError {
+        throw error
+      }
+
+      // 2. 데이터가 버퍼에 있는 경우 (정상 데이터 반환)
+      if !buffer.isEmpty {
+        return buffer.removeFirst()
+      }
+
+      // 3. 버퍼가 비어있고, isFinished가 true이며, 에러가 없는 경우 (정상 종료)
+      //    (buffer.isEmpty && isFinished && streamError == nil)
+      return nil // EOF
+    }
+  }
+
   private let webServer = GCDWebServer()
 
   @Published
   private(set) var isRunning: Bool = false
 
-  /// 현재 기기의 로컬 IP 주소 (Wi-Fi 기준, en0)
   @Published
   var ipAddress: String = "Unknown"
 
@@ -448,92 +510,103 @@ final class LocalLlmServer: ObservableObject {
     let jsonEncoder = JSONEncoder()
 
     // POST /generate (Streaming)
-    // *** FIX: Use the 'asyncProcessBlock' overload explicitly to resolve compiler ambiguity ***
+    // *** FIX: Use the synchronous 'processor' overload that returns a response object ***
     webServer.addHandler(
       forMethod: "POST",
       path: "/generate",
-      request: GCDWebServerDataRequest.self,
-      asyncProcessBlock: { [weak self] request, completionBlock in
-        // 1. viewModel 및 요청 유효성 검사
-        guard
-          let self,
-          let vm = self.viewModel
-        else {
-          let response = GCDWebServerDataResponse(
-            jsonObject: ["error": "Server internal error: ViewModel not found."]
-          )!
-          response.statusCode = 500
-          completionBlock(response) // FIX: Call completion block
-          return                   // FIX: Return Void
-        }
-
-        guard
-          let dataRequest = request as? GCDWebServerDataRequest,
-          let json = dataRequest.jsonObject as? [String: Any],
-          let prompt = json["prompt"] as? String
-        else {
-          let response = GCDWebServerDataResponse(
-            jsonObject: ["error": "Invalid request. Expected JSON {\"prompt\": \"...\"}."]
-          )!
-          response.statusCode = 400
-          completionBlock(response) // FIX: Call completion block
-          return                   // FIX: Return Void
-        }
-
-        // 2. 스트리밍 응답 (Server-Sent Events) 생성
-        let response = GCDWebServerStreamedResponse(
-          contentType: "text/event-stream",
-          asyncStreamWriter: { writer in
-            do {
-              // 3. ViewModel에서 후처리된 텍스트 스트림을 가져옴
-              let responseStream = try await vm.generateStreamStateless(prompt)
-
-              // 4. 스트림을 순회하며 SSE 이벤트 전송
-              for try await partialText in responseStream {
-                guard !partialText.isEmpty else { continue }
-
-                // data: {"output": "..."}\n\n
-                let chunkPayload = ["output": partialText]
-                let jsonData = try jsonEncoder.encode(chunkPayload)
-                let jsonString = String(data: jsonData, encoding: .utf8)!
-                let sseMessage = "data: \(jsonString)\n\n"
-
-                await writer.write(data: sseMessage.data(using: .utf8)!)
-              }
-
-              // 5. 스트림 종료 이벤트 전송
-              // event: done\ndata: {}\n\n
-              let donePayload = ["output": ""] // 빈 객체 전송
-              let jsonData = try jsonEncoder.encode(donePayload)
-              let jsonString = String(data: jsonData, encoding: .utf8)!
-              let doneMessage = "event: done\ndata: \(jsonString)\n\n"
-              await writer.write(data: doneMessage.data(using: .utf8)!)
-
-            } catch {
-              // 6. 스트리밍 중 오류 발생 시 오류 이벤트 전송
-              // event: error\ndata: {"error": "..."}\n\n
-              let errorPayload = ["error": error.localizedDescription]
-              if let jsonData = try? jsonEncoder.encode(errorPayload),
-                let jsonString = String(data: jsonData, encoding: .utf8)
-              {
-                let sseMessage = "event: error\ndata: \(jsonString)\n\n"
-                await writer.write(data: sseMessage.data(using: .utf8)!)
-              }
-            }
-
-            // 7. 스트림 닫기
-            await writer.close()
-          }
-        )
-
-        // 프록시나 클라이언트가 응답을 버퍼링하지 않도록 설정
-        response.setValue("no-cache", forAdditionalHeader: "Cache-Control")
-        response.setValue("keep-alive", forAdditionalHeader: "Connection")
-
-        // 스트림 응답 객체를 completion block으로 전달
-        completionBlock(response) // FIX: Call completion block
+      request: GCDWebServerDataRequest.self
+    ) { [weak self] request in
+      // 1. viewModel 및 요청 유효성 검사
+      guard
+        let self,
+        let vm = self.viewModel
+      else {
+        let response = GCDWebServerDataResponse(
+          jsonObject: ["error": "Server internal error: ViewModel not found."]
+        )!
+        response.statusCode = 500
+        return response // Return sync
       }
-    ) // End of addHandler
+
+      guard
+        let dataRequest = request as? GCDWebServerDataRequest,
+        let json = dataRequest.jsonObject as? [String: Any],
+        let prompt = json["prompt"] as? String
+      else {
+        let response = GCDWebServerDataResponse(
+          jsonObject: ["error": "Invalid request. Expected JSON {\"prompt\": \"...\"}."]
+        )!
+        response.statusCode = 400
+        return response // Return sync
+      }
+
+      // 2. 비동기-동기 브릿지 큐 생성
+      let dataQueue = DataQueue()
+
+      // 3. 백그라운드 Task를 시작하여 비동기 스트림의 데이터를 큐에 PUSH
+      Task {
+        do {
+          let responseStream = try await vm.generateStreamStateless(prompt)
+
+          // [Producer]
+          for try await partialText in responseStream {
+            guard !partialText.isEmpty else { continue }
+
+            let chunkPayload = ["output": partialText]
+            let jsonData = try jsonEncoder.encode(chunkPayload)
+            let jsonString = String(data: jsonData, encoding: .utf8)!
+            let sseMessage = "data: \(jsonString)\n\n"
+
+            dataQueue.push(sseMessage.data(using: .utf8)!)
+          }
+
+          // 스트림 정상 종료
+          let donePayload = ["output": ""]
+          let jsonData = try jsonEncoder.encode(donePayload)
+          let jsonString = String(data: jsonData, encoding: .utf8)!
+          let doneMessage = "event: done\ndata: \(jsonString)\n\n"
+          dataQueue.push(doneMessage.data(using: .utf8)!)
+
+          dataQueue.finish()
+
+        } catch {
+          // 스트림 오류 종료
+          let errorPayload = ["error": error.localizedDescription]
+          if let jsonData = try? jsonEncoder.encode(errorPayload),
+            let jsonString = String(data: jsonData, encoding: .utf8)
+          {
+            let sseMessage = "event: error\ndata: \(jsonString)\n\n"
+            dataQueue.push(sseMessage.data(using: .utf8)!)
+          }
+          dataQueue.finish(error: error)
+        }
+      }
+
+      // 4. 스트리밍 응답 객체를 *동기적으로* 생성 및 반환
+      // *** FIX: 'streamBlock' 이니셜라이저 사용 ***
+      let response = GCDWebServerStreamedResponse(
+        contentType: "text/event-stream",
+        streamBlock: { errorPtr in
+          // [Consumer]
+          // 이 블록은 GCDWebServer 스레드에서 동기적으로 호출됨
+          do {
+            // 큐에서 데이터를 PULL (데이터가 없으면 대기)
+            // pull()이 nil을 반환하면 스트림이 정상 종료된 것임
+            return try dataQueue.pull()
+          } catch {
+            // pull()이 에러를 throw하면 스트림이 비정상 종료된 것임
+            // errorPtr를 통해 GCDWebServer에 에러를 전달
+            errorPtr?.pointee = error as NSError
+            return nil
+          }
+        }
+      )
+
+      response.setValue("no-cache", forAdditionalHeader: "Cache-Control")
+      response.setValue("keep-alive", forAdditionalHeader: "Connection")
+
+      return response // Return sync
+    }
 
     webServer.start(withPort: 8080, bonjourName: nil)
 
