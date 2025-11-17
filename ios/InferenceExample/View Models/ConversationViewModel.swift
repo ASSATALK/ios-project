@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You mayM a copy of the License at
 //
 //      http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -140,6 +140,44 @@ class ConversationViewModel: ObservableObject {
       throw error
     } catch {
       throw InferenceError.mediaPipeTasksError(error: error)
+    }
+  }
+  
+  /// 서버에서 1회 요청/응답용으로 사용하는 stateless *스트리밍* 생성 함수.
+  /// `trimmedOfMarkers` 후처리가 적용된 `AsyncThrowingStream`을 반환한다.
+  /// 기존 `chat` / `messageViewModels` 를 전혀 건드리지 않는다.
+  func generateStreamStateless(_ text: String) async throws -> AsyncThrowingStream<String, any Error> {
+    guard let model else {
+      throw InferenceError.onDeviceModelNotInitialized
+    }
+    
+    let chat: Chat
+    let responseStream: AsyncThrowingStream<String, any Error>
+    
+    do {
+      chat = try Chat(model: model)
+      responseStream = try await chat.sendMessage(text)
+    } catch let error as InferenceError {
+      throw error
+    } catch {
+      throw InferenceError.mediaPipeTasksError(error: error)
+    }
+    
+    // 원본 스트림을 래핑하여, `trimmedOfMarkers` 로직을 적용하는 새 스트림을 반환
+    return AsyncThrowingStream { continuation in
+      Task {
+        do {
+          for try await partial in responseStream {
+            let trimmedPartial = trimmedOfMarkers(text: partial)
+            if !trimmedPartial.isEmpty {
+              continuation.yield(trimmedPartial)
+            }
+          }
+          continuation.finish()
+        } catch {
+          continuation.finish(throwing: error)
+        }
+      }
     }
   }
 

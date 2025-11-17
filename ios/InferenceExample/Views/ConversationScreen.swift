@@ -89,8 +89,9 @@ struct ConversationScreen: View {
                   • URL:  http://\(server.ipAddress):8080/generate
                   • Method:  POST
                   • Body (JSON): { "prompt": "Hello" }
-
-                  로 요청을 보내면, LLM이 응답을 생성합니다.
+                  
+                  로 요청을 보내면, LLM이 응답을
+                  스트리밍 (Server-Sent Events)으로 생성합니다.
                   """
                 )
                 .font(.footnote)
@@ -444,16 +445,27 @@ final class LocalLlmServer: ObservableObject {
     guard !isRunning else { return }
 
     self.viewModel = viewModel
+    let jsonEncoder = JSONEncoder()
 
-    // POST /generate
+    // POST /generate (Streaming)
     webServer.addHandler(
       forMethod: "POST",
       path: "/generate",
       request: GCDWebServerDataRequest.self
     ) { [weak self] request in
+      // 1. viewModel 및 요청 유효성 검사
       guard
         let self,
-        let vm = self.viewModel,
+        let vm = self.viewModel
+      else {
+        let response = GCDWebServerDataResponse(
+          jsonObject: ["error": "Server internal error: ViewModel not found."]
+        )!
+        response.statusCode = 500
+        return response
+      }
+
+      guard
         let dataRequest = request as? GCDWebServerDataRequest,
         let json = dataRequest.jsonObject as? [String: Any],
         let prompt = json["prompt"] as? String
@@ -465,23 +477,58 @@ final class LocalLlmServer: ObservableObject {
         return response
       }
 
-      let result = self.generateBlocking(prompt: prompt, with: vm)
+      // 2. 스트리밍 응답 (Server-Sent Events) 생성
+      let response = GCDWebServerStreamedResponse(
+        contentType: "text/event-stream",
+        asyncStreamWriter: { writer in
+          do {
+            // 3. ViewModel에서 후처리된 텍스트 스트림을 가져옴
+            let responseStream = try await vm.generateStreamStateless(prompt)
 
-      switch result {
-      case .success(let output):
-        let body: [String: Any] = [
-          "prompt": prompt,
-          "output": output,
-        ]
-        return GCDWebServerDataResponse(jsonObject: body)!
+            // 4. 스트림을 순회하며 SSE 이벤트 전송
+            for try await partialText in responseStream {
+              guard !partialText.isEmpty else { continue }
+              
+              // data: {"output": "..."}\n\n
+              let chunkPayload = ["output": partialText]
+              let jsonData = try jsonEncoder.encode(chunkPayload)
+              let jsonString = String(data: jsonData, encoding: .utf8)!
+              let sseMessage = "data: \(jsonString)\n\n"
+              
+              await writer.write(data: sseMessage.data(using: .utf8)!)
+            }
+            
+            // 5. 스트림 종료 이벤트 전송
+            // event: done\ndata: {}\n\n
+            let donePayload = ["output": ""] // 빈 객체 전송
+            let jsonData = try jsonEncoder.encode(donePayload)
+            let jsonString = String(data: jsonData, encoding: .utf8)!
+            let doneMessage = "event: done\ndata: \(jsonString)\n\n"
+            await writer.write(data: doneMessage.data(using: .utf8)!)
 
-      case .failure(let error):
-        let response = GCDWebServerDataResponse(
-          jsonObject: ["error": "\(error)"]
-        )!
-        response.statusCode = 500
-        return response
-      }
+          } catch {
+            // 6. 스트리밍 중 오류 발생 시 오류 이벤트 전송
+            // event: error\ndata: {"error": "..."}\n\n
+            let errorPayload = ["error": error.localizedDescription]
+            if let jsonData = try? jsonEncoder.encode(errorPayload),
+              let jsonString = String(data: jsonData, encoding: .utf8)
+            {
+              let sseMessage = "event: error\ndata: \(jsonString)\n\n"
+              await writer.write(data: sseMessage.data(using: .utf8)!)
+            }
+          }
+          
+          // 7. 스트림 닫기
+          await writer.close()
+        }
+      )
+      
+      // 프록시나 클라이언트가 응답을 버퍼링하지 않도록 설정
+      response.setValue("no-cache", forAdditionalHeader: "Cache-Control")
+      response.setValue("keep-alive", forAdditionalHeader: "Connection")
+
+      // 스트림 응답 객체를 즉시 반환
+      return response
     }
 
     webServer.start(withPort: 8080, bonjourName: nil)
@@ -493,7 +540,7 @@ final class LocalLlmServer: ObservableObject {
     }
 
     isRunning = true
-    print("🌐 Local LLM HTTP server started at http://\(ipAddress):8080")
+    print("🌐 Local LLM HTTP server (streaming) started at http://\(ipAddress):8080")
   }
 
   func stop() {
@@ -501,35 +548,6 @@ final class LocalLlmServer: ObservableObject {
     webServer.stop()
     isRunning = false
     print("🛑 Local LLM HTTP server stopped")
-  }
-
-  /// GCDWebServer 핸들러는 동기이기 때문에, 내부에서 async → sync 브릿지를 만든다.
-  private func generateBlocking(
-    prompt: String,
-    with viewModel: ConversationViewModel
-  ) -> Result<String, Error> {
-    var result: Result<String, Error>?
-    let semaphore = DispatchSemaphore(value: 0)
-
-    Task {
-      do {
-        let text = try await viewModel.generateOnceStateless(prompt)
-        result = .success(text)
-      } catch {
-        result = .failure(error)
-      }
-      semaphore.signal()
-    }
-
-    semaphore.wait()
-
-    return result ?? .failure(
-      NSError(
-        domain: "LocalLlmServer",
-        code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "No result from LLM"]
-      )
-    )
   }
 
   /// 현재 기기의 Wi-Fi 인터페이스(en0)의 IPv4/IPv6 주소를 반환
