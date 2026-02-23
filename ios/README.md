@@ -1,5 +1,20 @@
-# Setup Instructions
+# InferenceExample (Speech Transcriber)
 
-1. Run `pod install`.
-1. Download the `gemma-2b-it-cpu-int4.bin` and `gemma-2b-it-gpu-int4.bin` model from [the documentation](https://developers.google.com/mediapipe/solutions/genai/llm_inference#models) into this directory.
-1. Open `InferenceExample.xcworkspace` and run the project.
+## What changed
+- 기존 LLM/MediaPipe 중심 코드를 제거하고, Speech framework 중심 전사 앱으로 재구성했습니다.
+- 타깃/스킴/워크스페이스 명은 그대로 유지했습니다.
+
+## Features
+- Real-time transcription via microphone (`SpeechAnalyzer` / `SpeechTranscriber`)
+- Audio file transcription through iOS file picker
+- Lightweight SwiftUI UI for live and file transcript views
+
+## Build
+```bash
+pod install
+```
+그 다음 `InferenceExample.xcworkspace`를 열어 빌드합니다.
+
+## CI
+- `.github/workflows/ios-ipa.yml` 그대로 사용
+- workflow에서 `pod install` 후 `InferenceExample` 스킴 archive + unsigned IPA 생성

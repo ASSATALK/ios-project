@@ -1,9 +1,10 @@
 platform :ios, '15.0'
 
 target 'InferenceExample' do
-  # Comment the next line if you don't want to use dynamic frameworks
   use_frameworks!
-  pod 'MediaPipeTasksGenAI'
+
+  # Keep at least one dynamic CocoaPods target because CI patches
+  # Pods-InferenceExample-frameworks.sh by path.
   pod 'GCDWebServer'
 end
 
