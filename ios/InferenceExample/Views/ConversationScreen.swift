@@ -1,18 +1,15 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 struct ConversationScreen: View {
-  @StateObject private var viewModel: ConversationViewModel
+  @StateObject private var viewModel = ConversationViewModel()
   @State private var showingImporter = false
 
   private var supportedAudioTypes: [UTType] {
     let commonExtensions = ["wav", "mp3", "m4a", "aac", "aiff", "caf"]
     let extensionTypes = commonExtensions.compactMap { UTType(filenameExtension: $0) }
     return [.audio, .mpeg4Audio] + extensionTypes
-  }
-
-  init(viewModel: ConversationViewModel = ConversationViewModel()) {
-    _viewModel = StateObject(wrappedValue: viewModel)
   }
 
   var body: some View {

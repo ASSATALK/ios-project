@@ -1,4 +1,4 @@
-name: Build unsigned iOS LLM IPA
+name: Build unsigned iOS Speech IPA
 
 on:
   workflow_dispatch:
@@ -64,8 +64,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
-            ENABLE_USER_SCRIPT_SANDBOXING=NO  # ⬅️ 이 줄을 추가하세요!
+            DEVELOPMENT_TEAM="" \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO
 
       - name: Create unsigned IPA
         working-directory: ios
@@ -91,5 +91,5 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-llm-unsigned-ipa
+          name: ios-speech-unsigned-ipa
           path: ios/*.ipa

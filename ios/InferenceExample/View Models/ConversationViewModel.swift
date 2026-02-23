@@ -47,7 +47,6 @@ final class ConversationViewModel: ObservableObject {
 
     Task {
       do {
-        try await speechEngine.requestPermissions()
         liveCommittedText = ""
         liveVolatileText = ""
         try await speechEngine.startLive()

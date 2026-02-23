@@ -22,7 +22,6 @@
 		AA673F8A2DAD955F0066441A /* DownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA673F862DAD955E0066441A /* DownloadView.swift */; };
 		AA673F8B2DAD955F0066441A /* AcknowledgeLicenseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA673F872DAD955F0066441A /* AcknowledgeLicenseView.swift */; };
 		AA673F8C2DAD955F0066441A /* RoundedRectButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA673F882DAD955F0066441A /* RoundedRectButton.swift */; };
-		AA673F902DAD96C90066441A /* LaTeXSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA673F8F2DAD96C90066441A /* LaTeXSwiftUI */; };
 		AA673F952DAD97370066441A /* Metadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA673F922DAD97370066441A /* Metadata.swift */; };
 		AA673F962DAD97370066441A /* Model.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA673F932DAD97370066441A /* Model.swift */; };
 		AA673F972DAD97370066441A /* AuthConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA673F942DAD97370066441A /* AuthConfig.swift */; };
@@ -70,7 +69,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				0B6641881CDD8AB5E5F6C3FE /* Pods_InferenceExample.framework in Frameworks */,
-				AA673F902DAD96C90066441A /* LaTeXSwiftUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -209,7 +207,6 @@
 			);
 			name = InferenceExample;
 			packageProductDependencies = (
-				AA673F8F2DAD96C90066441A /* LaTeXSwiftUI */,
 			);
 			productName = InferenceExample;
 			productReference = 8DCF4C412B99289E00427D77 /* InferenceExample.app */;
@@ -240,7 +237,6 @@
 			);
 			mainGroup = 8DCF4C382B99289D00427D77;
 			packageReferences = (
-				AA673F8E2DAD96C90066441A /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */,
 			);
 			productRefGroup = 8DCF4C422B99289E00427D77 /* Products */;
 			projectDirPath = "";
@@ -534,24 +530,6 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		AA673F8E2DAD96C90066441A /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/colinc86/LaTeXSwiftUI";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		AA673F8F2DAD96C90066441A /* LaTeXSwiftUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA673F8E2DAD96C90066441A /* XCRemoteSwiftPackageReference "LaTeXSwiftUI" */;
-			productName = LaTeXSwiftUI;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8DCF4C392B99289D00427D77 /* Project object */;
 }

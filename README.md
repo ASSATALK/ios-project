@@ -3,9 +3,12 @@
 `ios/InferenceExample`는 iOS Speech framework 기반 실시간/파일 음성 전사 앱입니다.
 
 ## 핵심 기능
-- `SpeechAnalyzer` + `SpeechTranscriber` 기반 실시간 마이크 전사
+- `SFSpeechRecognizer` 기반 실시간 마이크 전사
 - 파일 선택(`fileImporter`) 후 오디오 파일 전사
 - 결과 텍스트 즉시 확인/초기화
+
+## 참고
+- 현재 GitHub Actions `macos-latest`의 Xcode SDK에서는 `SpeechAnalyzer`/`SpeechTranscriber` 타입 인식이 불안정할 수 있어 CI 안정성을 위해 `SFSpeechRecognizer` 경로로 구성했습니다.
 
 ## 빌드 경로
 GitHub Actions 빌드 경로는 기존과 동일하게 유지됩니다.
