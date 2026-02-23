@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+@preconcurrency
 import Speech
 
 final class OnDeviceModel {
@@ -57,7 +58,7 @@ final class OnDeviceModel {
     case secondary
   }
 
-  private final class ResumeGate {
+  private final class ResumeGate: @unchecked Sendable {
     private let lock = NSLock()
     private var isDone = false
 
@@ -70,7 +71,7 @@ final class OnDeviceModel {
     }
   }
 
-  private final class RecognitionTaskBox {
+  private final class RecognitionTaskBox: @unchecked Sendable {
     var task: SFSpeechRecognitionTask?
   }
 
@@ -205,7 +206,7 @@ final class OnDeviceModel {
     try await requestPermissions()
 
     let primaryLocale = languageMode.primaryLocale
-    let primaryLabel = localeLabel(primaryLocale)
+    let primaryLabel = Self.localeLabel(primaryLocale)
     var primaryText: String?
     var secondaryText: String?
     var failures = [String]()
@@ -217,7 +218,7 @@ final class OnDeviceModel {
     }
 
     if let secondaryLocale = languageMode.secondaryLocale {
-      let secondaryLabel = localeLabel(secondaryLocale)
+      let secondaryLabel = Self.localeLabel(secondaryLocale)
       do {
         secondaryText = try await transcribeFileSingle(url: url, locale: secondaryLocale)
       } catch {
@@ -239,7 +240,7 @@ final class OnDeviceModel {
     }
 
     if let p = primaryText, let s = secondaryText {
-      return mergeDualText(primary: p, secondary: s, labeled: true)
+      return Self.mergeDualText(primary: p, secondary: s, labeled: true)
     }
 
     if let p = primaryText {
@@ -294,7 +295,7 @@ final class OnDeviceModel {
 
     if let error, !isStoppingLive {
       dispatchToMain {
-        self.onError?("실시간 전사 오류: \(mapSpeechError(error).localizedDescription)")
+        self.onError?("실시간 전사 오류: \(Self.mapSpeechError(error).localizedDescription)")
       }
     }
   }
@@ -304,7 +305,7 @@ final class OnDeviceModel {
     case .korean, .english:
       return latestPrimaryText
     case .koreanEnglish:
-      return mergeDualText(primary: latestPrimaryText, secondary: latestSecondaryText, labeled: true)
+      return Self.mergeDualText(primary: latestPrimaryText, secondary: latestSecondaryText, labeled: true)
     }
   }
 
@@ -312,10 +313,10 @@ final class OnDeviceModel {
     do {
       return try await transcribeFileWithURLRequest(url: url, locale: locale)
     } catch {
-      if shouldRetryWithBuffer(error) {
+      if Self.shouldRetryWithBuffer(error) {
         return try await transcribeFileWithBufferRequest(url: url, locale: locale)
       }
-      throw mapSpeechError(error)
+      throw Self.mapSpeechError(error)
     }
   }
 
@@ -344,7 +345,7 @@ final class OnDeviceModel {
         }
 
         if let error {
-          if isRecoverableAssistantError(error), !lastText.isEmpty {
+          if Self.isRecoverableAssistantError(error), !lastText.isEmpty {
             gate.perform {
               taskBox.task?.cancel()
               continuation.resume(returning: lastText)
@@ -352,7 +353,7 @@ final class OnDeviceModel {
           } else {
             gate.perform {
               taskBox.task?.cancel()
-              continuation.resume(throwing: mapSpeechError(error))
+              continuation.resume(throwing: Self.mapSpeechError(error))
             }
           }
         }
@@ -391,7 +392,7 @@ final class OnDeviceModel {
         }
 
         if let error {
-          if isRecoverableAssistantError(error), !lastText.isEmpty {
+          if Self.isRecoverableAssistantError(error), !lastText.isEmpty {
             gate.perform {
               taskBox.task?.cancel()
               continuation.resume(returning: lastText)
@@ -399,7 +400,7 @@ final class OnDeviceModel {
           } else {
             gate.perform {
               taskBox.task?.cancel()
-              continuation.resume(throwing: mapSpeechError(error))
+              continuation.resume(throwing: Self.mapSpeechError(error))
             }
           }
         }
@@ -435,24 +436,24 @@ final class OnDeviceModel {
           request.endAudio()
           gate.perform {
             taskBox.task?.cancel()
-            continuation.resume(throwing: mapSpeechError(error))
+            continuation.resume(throwing: Self.mapSpeechError(error))
           }
         }
       }
     }
   }
 
-  private func shouldRetryWithBuffer(_ error: Error) -> Bool {
+  private static func shouldRetryWithBuffer(_ error: Error) -> Bool {
     let nsError = error as NSError
     return nsError.domain == "kAFAssistantErrorDomain" && [1101, 1107, 1110].contains(nsError.code)
   }
 
-  private func isRecoverableAssistantError(_ error: Error) -> Bool {
+  private static func isRecoverableAssistantError(_ error: Error) -> Bool {
     let nsError = error as NSError
     return nsError.domain == "kAFAssistantErrorDomain" && [1101, 1107].contains(nsError.code)
   }
 
-  private func mapSpeechError(_ error: Error) -> NSError {
+  private static func mapSpeechError(_ error: Error) -> NSError {
     let nsError = error as NSError
 
     if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1107 {
@@ -468,7 +469,7 @@ final class OnDeviceModel {
     return nsError
   }
 
-  private func localeLabel(_ locale: Locale) -> String {
+  private static func localeLabel(_ locale: Locale) -> String {
     if locale.identifier.hasPrefix("ko") {
       return "KO"
     }
@@ -478,7 +479,7 @@ final class OnDeviceModel {
     return locale.identifier
   }
 
-  private func mergeDualText(primary: String, secondary: String, labeled: Bool) -> String {
+  private static func mergeDualText(primary: String, secondary: String, labeled: Bool) -> String {
     let p = primary.trimmingCharacters(in: .whitespacesAndNewlines)
     let s = secondary.trimmingCharacters(in: .whitespacesAndNewlines)
 
