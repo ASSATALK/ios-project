@@ -22,6 +22,15 @@ struct ConversationScreen: View {
           .font(.footnote)
           .foregroundStyle(.secondary)
 
+        GroupBox("전사 언어") {
+          Picker("전사 언어", selection: $viewModel.selectedLanguage) {
+            ForEach(OnDeviceModel.LanguageMode.allCases) { mode in
+              Text(mode.rawValue).tag(mode)
+            }
+          }
+          .pickerStyle(.segmented)
+        }
+
         GroupBox("실시간 전사") {
           VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {

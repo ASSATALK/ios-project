@@ -8,6 +8,7 @@
 - Real-time transcription via microphone (`SFSpeechRecognizer`)
 - Audio file transcription through iOS file picker
 - Lightweight SwiftUI UI for live and file transcript views
+- Language modes: `Korean`, `English`, `Korean+English`
 
 ## CI compatibility note
 - GitHub Actions `macos-latest` SDK 호환성을 우선해 `SpeechAnalyzer`/`SpeechTranscriber` 대신 `SFSpeechRecognizer` 기반으로 빌드되도록 구성했습니다.

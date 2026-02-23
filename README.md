@@ -6,6 +6,7 @@
 - `SFSpeechRecognizer` 기반 실시간 마이크 전사
 - 파일 선택(`fileImporter`) 후 오디오 파일 전사
 - 결과 텍스트 즉시 확인/초기화
+- 전사 언어 선택: `한국어`, `English`, `한/영 동시`
 
 ## 참고
 - 현재 GitHub Actions `macos-latest`의 Xcode SDK에서는 `SpeechAnalyzer`/`SpeechTranscriber` 타입 인식이 불안정할 수 있어 CI 안정성을 위해 `SFSpeechRecognizer` 경로로 구성했습니다.

@@ -9,6 +9,7 @@ final class ConversationViewModel: ObservableObject {
   @Published var isRecording = false
   @Published var isBusy = false
   @Published var selectedFileURL: URL?
+  @Published var selectedLanguage: OnDeviceModel.LanguageMode = .koreanEnglish
 
   private let speechEngine = OnDeviceModel()
 
@@ -49,11 +50,11 @@ final class ConversationViewModel: ObservableObject {
       do {
         liveCommittedText = ""
         liveVolatileText = ""
-        try await speechEngine.startLive()
+        try await speechEngine.startLive(languageMode: selectedLanguage)
 
         isRecording = true
         isBusy = false
-        statusMessage = "마이크 입력을 실시간 전사 중입니다."
+        statusMessage = "\(selectedLanguage.rawValue) 모드로 실시간 전사 중입니다."
       } catch {
         isRecording = false
         isBusy = false
@@ -95,9 +96,12 @@ final class ConversationViewModel: ObservableObject {
     Task {
       do {
         let secureURL = try copyToTemporaryReadableLocation(url: sourceURL)
-        let text = try await speechEngine.transcribeFile(url: secureURL)
+        let text = try await speechEngine.transcribeFile(
+          url: secureURL,
+          languageMode: selectedLanguage
+        )
         fileTranscriptText = text.isEmpty ? "(전사 결과 없음)" : text
-        statusMessage = "파일 전사 완료"
+        statusMessage = "\(selectedLanguage.rawValue) 모드 파일 전사 완료"
       } catch {
         statusMessage = "파일 전사 실패: \(error.localizedDescription)"
       }
